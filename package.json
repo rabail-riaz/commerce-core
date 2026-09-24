@@ -1,0 +1,26 @@
+{
+  "name": "commerce-operations-saas",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @commerce/api\" \"npm run dev -w @commerce/web\"",
+    "dev:api": "npm run dev -w @commerce/api",
+    "dev:web": "npm run dev -w @commerce/web",
+    "build": "npm run build -w @commerce/api && npm run build -w @commerce/web",
+    "lint": "npm run lint -w @commerce/api && npm run lint -w @commerce/web",
+    "test": "npm run test -w @commerce/api",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "concurrently": "^9.1.2",
+    "prisma": "^6.2.1"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1"
+  }
+}
