@@ -18,14 +18,14 @@ export class ReportsService {
       ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
       ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
     };
-    const orderWhere: Prisma.OrderWhereInput = { tenantId, ...(query.storeId ? { storeId: query.storeId } : {}), ...(Object.keys(createdAt).length ? { createdAt } : {}) };
+    const orderWhere: Prisma.OrderWhereInput = { tenantId, isCourierGenerated: false, ...(query.storeId ? { storeId: query.storeId } : {}), ...(Object.keys(createdAt).length ? { createdAt } : {}) };
 
     const [ordersByStatus, ordersByStore, ordersByCity, revenue, customers, tickets, shipments, ordersByDay, productRevenue, courierMetrics, deliveryMetrics, ticketMetrics, agentPerformance] = await Promise.all([
       this.prisma.order.groupBy({ by: ['status'], where: orderWhere, _count: { _all: true }, _sum: { totalAmount: true } }),
       this.prisma.order.groupBy({ by: ['storeId'], where: orderWhere, _count: { _all: true }, _sum: { totalAmount: true } }),
       this.prisma.$queryRaw<Array<{ city: string; count: bigint; revenue: Prisma.Decimal }>>(Prisma.sql`
         SELECT COALESCE("shippingAddress"->>'city', 'Unknown') AS city, COUNT(*)::bigint AS count, COALESCE(SUM("totalAmount"), 0)::decimal AS revenue
-        FROM "Order" WHERE "tenantId" = ${tenantId}
+        FROM "Order" WHERE "tenantId" = ${tenantId} AND "isCourierGenerated" = false
         ${query.storeId ? Prisma.sql`AND "storeId" = ${query.storeId}` : Prisma.empty}
         ${query.dateFrom ? Prisma.sql`AND "createdAt" >= ${new Date(query.dateFrom)}` : Prisma.empty}
         ${query.dateTo ? Prisma.sql`AND "createdAt" <= ${new Date(query.dateTo)}` : Prisma.empty}
@@ -37,7 +37,7 @@ export class ReportsService {
       this.prisma.shipment.groupBy({ by: ['status'], where: { tenantId }, _count: { _all: true } }),
       this.prisma.$queryRaw<Array<{ day: Date; count: bigint; revenue: Prisma.Decimal }>>(Prisma.sql`
         SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::bigint AS count, COALESCE(SUM("totalAmount"), 0)::decimal AS revenue
-        FROM "Order" WHERE "tenantId" = ${tenantId}
+        FROM "Order" WHERE "tenantId" = ${tenantId} AND "isCourierGenerated" = false
         ${query.storeId ? Prisma.sql`AND "storeId" = ${query.storeId}` : Prisma.empty}
         ${query.dateFrom ? Prisma.sql`AND "createdAt" >= ${new Date(query.dateFrom)}` : Prisma.empty}
         ${query.dateTo ? Prisma.sql`AND "createdAt" <= ${new Date(query.dateTo)}` : Prisma.empty}

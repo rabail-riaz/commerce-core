@@ -146,8 +146,31 @@ export const api = {
     return request(`/integrations/${encodeURIComponent(id)}/sync`, { method: 'POST' });
   },
 
+  syncIntegrationProducts(id) {
+    return request(`/integrations/${encodeURIComponent(id)}/sync-products`, { method: 'POST' });
+  },
+
   reconcileIntegration(id) {
     return request(`/integrations/${encodeURIComponent(id)}/reconcile`, { method: 'POST' });
+  },
+
+  integrationsOverview() {
+    return request('/integrations/overview');
+  },
+
+  listCouriers() {
+    return request('/couriers');
+  },
+
+  connectCourier(code, credentials, name) {
+    return request(`/couriers/${encodeURIComponent(code)}/connect`, {
+      method: 'POST',
+      body: JSON.stringify({ credentials, ...(name ? { name } : {}) }),
+    });
+  },
+
+  disconnectCourier(code) {
+    return request(`/couriers/${encodeURIComponent(code)}/disconnect`, { method: 'POST' });
   },
 
   listEmailProviders() {
@@ -214,6 +237,13 @@ export const api = {
     return request(`/orders/${encodeURIComponent(id)}`);
   },
 
+  updateOrderStatus(id, status, note) {
+    return request(`/orders/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status, ...(note ? { note } : {}) }),
+    });
+  },
+
   bookOrderShipment(id, courierAccountId) {
     return request(`/orders/${encodeURIComponent(id)}/shipment`, {
       method: 'POST',
@@ -224,6 +254,10 @@ export const api = {
   listShipments(params = {}) {
     const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value !== undefined && value !== null)).toString();
     return request(`/shipments${query ? `?${query}` : ''}`);
+  },
+
+  syncShipments(payload = {}) {
+    return request('/shipments/sync', { method: 'POST', body: JSON.stringify(payload) });
   },
 
   getShipment(id) {
@@ -285,6 +319,87 @@ export const api = {
 
   deleteProduct(id) {
     return request(`/products/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  listVendors(params = {}) {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== '' && value !== undefined && value !== null),
+    ).toString();
+    return request(`/vendors${query ? `?${query}` : ''}`);
+  },
+
+  getVendor(id) {
+    return request(`/vendors/${encodeURIComponent(id)}`);
+  },
+
+  createVendor(vendor) {
+    return request('/vendors', { method: 'POST', body: JSON.stringify(vendor) });
+  },
+
+  updateVendor(id, vendor) {
+    return request(`/vendors/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(vendor) });
+  },
+
+  deleteVendor(id) {
+    return request(`/vendors/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  listPurchaseOrders(params = {}) {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== '' && value !== undefined && value !== null),
+    ).toString();
+    return request(`/purchase-orders${query ? `?${query}` : ''}`);
+  },
+
+  getPurchaseOrder(id) {
+    return request(`/purchase-orders/${encodeURIComponent(id)}`);
+  },
+
+  createPurchaseOrder(payload) {
+    return request('/purchase-orders', { method: 'POST', body: JSON.stringify(payload) });
+  },
+
+  updatePurchaseOrder(id, payload) {
+    return request(`/purchase-orders/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+
+  deletePurchaseOrder(id) {
+    return request(`/purchase-orders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  listExpenseCategories() {
+    return request('/expense-categories');
+  },
+
+  createExpenseCategory(payload) {
+    return request('/expense-categories', { method: 'POST', body: JSON.stringify(payload) });
+  },
+
+  deleteExpenseCategory(id) {
+    return request(`/expense-categories/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  listExpenses(params = {}) {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== '' && value !== undefined && value !== null),
+    ).toString();
+    return request(`/expenses${query ? `?${query}` : ''}`);
+  },
+
+  getExpense(id) {
+    return request(`/expenses/${encodeURIComponent(id)}`);
+  },
+
+  createExpense(payload) {
+    return request('/expenses', { method: 'POST', body: JSON.stringify(payload) });
+  },
+
+  updateExpense(id, payload) {
+    return request(`/expenses/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+
+  deleteExpense(id) {
+    return request(`/expenses/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
 
   listInbox(params = {}) {

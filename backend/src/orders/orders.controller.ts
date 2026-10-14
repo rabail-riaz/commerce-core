@@ -6,7 +6,7 @@ import { RequirePermissions } from '../common/permissions.decorator';
 import { CurrentUser } from '../common/current-user.decorator';
 import { AuthContext } from '../common/auth.types';
 import { apiResponse } from '../common/api-response';
-import { OrderQueryDto } from './dto';
+import { OrderQueryDto, UpdateOrderStatusDto } from './dto';
 import { OrdersService } from './orders.service';
 import { BookOrderShipmentDto } from './shipment.dto';
 
@@ -26,6 +26,12 @@ export class OrdersController {
   @Get(':id')
   async getById(@CurrentUser() user: AuthContext, @Param('id') id: string) {
     return apiResponse(await this.service.getById(user.tenantId, id));
+  }
+
+  @Post(':id/status')
+  @RequirePermissions('orders.update')
+  async updateStatus(@CurrentUser() user: AuthContext, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
+    return apiResponse(await this.service.updateStatus(user.tenantId, id, dto.status, dto.note));
   }
 
   @Post(':id/shipment')

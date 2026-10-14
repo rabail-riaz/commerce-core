@@ -1,32 +1,12 @@
-import { IsIn, IsObject, IsOptional, IsString, IsUrl, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
-
-export class WooCommerceCredentialsDto {
-  [key: string]: unknown;
-
-  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
-  url!: string;
-
-  @IsString()
-  key!: string;
-
-  @IsString()
-  secret!: string;
-
-  @IsOptional()
-  @IsString()
-  webhookSecret?: string;
-}
+import { IsIn, IsObject, IsOptional, IsString } from 'class-validator';
 
 export class IntegrationCredentialsDto {
   @IsObject()
-  @ValidateNested()
-  @Type(() => WooCommerceCredentialsDto)
-  credentials!: WooCommerceCredentialsDto;
+  credentials!: Record<string, unknown>;
 }
 
 export class CreateIntegrationDto {
-  @IsIn(['WOOCOMMERCE'])
+  @IsIn(['WOOCOMMERCE', 'SHOPIFY'])
   provider!: string;
 
   @IsOptional()

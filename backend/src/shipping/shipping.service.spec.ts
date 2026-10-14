@@ -4,14 +4,16 @@ import { ShippingService } from './shipping.service';
 
 describe('ShippingService order shipment return flow', () => {
   const prisma = {
-    shipment: { findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
+    shipment: { findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn(), count: jest.fn(), groupBy: jest.fn(), create: jest.fn() },
     return: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
-    order: { findFirst: jest.fn() },
+    order: { findFirst: jest.fn(), create: jest.fn() },
+    courierAccount: { findMany: jest.fn() },
     shipmentStatusHistory: { create: jest.fn() },
+    orderStatusHistory: { create: jest.fn() },
     returnStatusHistory: { create: jest.fn() },
     $transaction: jest.fn(),
   };
-  const couriers = { trackShipment: jest.fn() };
+  const couriers = { trackShipment: jest.fn(), canListShipments: jest.fn(), listRemoteShipments: jest.fn() };
   const service = new ShippingService(prisma as never, couriers as never);
 
   beforeEach(() => jest.clearAllMocks());
@@ -41,6 +43,26 @@ describe('ShippingService order shipment return flow', () => {
     expect(tx.shipment.update).toHaveBeenCalled();
     expect(tx.shipmentStatusHistory.create).toHaveBeenCalledTimes(2);
     expect(result.status).toBe('IN_TRANSIT');
+  });
+
+  it('filters and paginates shipments by courier', async () => {
+    prisma.shipment.findMany.mockResolvedValue([]);
+    prisma.shipment.count.mockResolvedValue(0);
+    prisma.courierAccount.findMany.mockResolvedValue([]);
+    prisma.shipment.groupBy.mockResolvedValue([]);
+    couriers.canListShipments.mockReturnValue(false);
+
+    const result = await service.listShipments('tenant-1', { page: 1, limit: 25, courier: 'postex' });
+
+    expect(prisma.shipment.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        tenantId: 'tenant-1',
+        courierAccount: { is: { courier: { is: { code: 'POSTEX' } } } },
+      }),
+      skip: 0,
+      take: 25,
+    }));
+    expect(result).toEqual(expect.objectContaining({ items: [], total: 0, page: 1 }));
   });
 
   it('creates a requested return and advances only through valid workflow transitions', async () => {

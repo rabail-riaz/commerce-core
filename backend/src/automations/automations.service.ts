@@ -71,7 +71,7 @@ export class AutomationsService {
     try {
       const execution = await this.prisma.automationExecution.create({ data: { tenantId, automationId, entityId, status: 'SUCCEEDED', attempts: attempts + 1, completedAt: new Date() } });
       return execution;
-    } catch (error) {
+    } catch {
       return this.prisma.automationExecution.create({ data: { tenantId, automationId, entityId, status: 'FAILED', attempts: attempts + 1, errorMessage: 'Automation failed' } });
     }
   }

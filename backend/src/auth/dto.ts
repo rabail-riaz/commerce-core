@@ -38,6 +38,16 @@ export class LoginDto {
   tenantSlug?: string;
 }
 
+export class SelectTenantDto {
+  @IsString()
+  @MinLength(1)
+  selectionToken!: string;
+
+  @IsString()
+  @MinLength(1)
+  tenantId!: string;
+}
+
 export class RefreshDto {
   @IsString()
   @MinLength(1)

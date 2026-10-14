@@ -39,6 +39,21 @@ describe('PostExAdapter', () => {
     expect(JSON.stringify(result)).not.toContain('sandbox-token');
   });
 
+  it('lists merchant shipments without exposing the token', async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({
+      statusCode: '200',
+      dist: [{ trackingNumber: 'PX-123', orderRefNumber: 'order-1', transactionStatus: 'In Transit', customerName: 'Ali', cityName: 'Lahore' }],
+    }), { status: 200 }));
+
+    const items = await new PostExAdapter().listShipments({ token: 'sandbox-token' });
+    expect(items).toEqual([expect.objectContaining({ trackingNumber: 'PX-123', orderReference: 'order-1', status: 'IN_TRANSIT', city: 'Lahore' })]);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/services/integration/api/order/v1/get-all-order'),
+      expect.objectContaining({ headers: expect.objectContaining({ token: 'sandbox-token' }) }),
+    );
+    expect(JSON.stringify(items)).not.toContain('sandbox-token');
+  });
+
   it('tracks and maps provider status', async () => {
     global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({
       status: true,
@@ -65,5 +80,22 @@ describe('PostExAdapter', () => {
       package: { weight: 1 },
     })).rejects.toThrow('PostEx token is required');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('validates credentials against merchant addresses', async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response('{"status":true}', { status: 200 }));
+    await expect(new PostExAdapter().validateCredentials({ apiKey: 'sandbox-token' })).resolves.toEqual(expect.objectContaining({ valid: true }));
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.postex.pk/services/integration/api/order/v1/get-merchant-address',
+      expect.objectContaining({ headers: expect.objectContaining({ token: 'sandbox-token' }) }),
+    );
+  });
+
+  it('rejects a malformed PostEx token instead of treating server errors as success', async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response('{"status":500}', { status: 500 }));
+    await expect(new PostExAdapter().validateCredentials({ token: 'not-a-token' })).resolves.toEqual(expect.objectContaining({
+      valid: false,
+      message: expect.stringContaining('full merchant API token'),
+    }));
   });
 });

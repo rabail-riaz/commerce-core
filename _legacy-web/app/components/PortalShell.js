@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api-client';
+import DashboardContent from './DashboardContent';
 import OrdersContent from './OrdersContent';
 import CustomersContent from './CustomersContent';
 import ProductsContent from './ProductsContent';
@@ -16,6 +17,7 @@ import CampaignsContent from './CampaignsContent';
 import AutomationsContent from './AutomationsContent';
 import ReportsContent from './ReportsContent';
 import SettingsContent from './SettingsContent';
+import AccountingContent from './AccountingContent';
 
 const navigation = [
   ['Dashboard', '/dashboard', '⌂'],
@@ -29,11 +31,25 @@ const navigation = [
   ['Campaigns', '/campaigns', '✦'],
   ['Automations', '/automations', '⚙'],
   ['Reports', '/reports', '▥'],
+  ['Accounting', '/accounting', '$'],
   ['Integrations', '/integrations', '◈'],
   ['Settings', '/settings', '☷'],
 ];
 
-export default function PortalShell({ section, user, tenant }) {
+const integrationCopy = {
+  website: ['WEBSITE', 'Website stores', 'Connect WooCommerce or Shopify and import catalog and orders.'],
+  courier: ['COURIERS', 'Pakistan couriers', 'Configure one or more courier APIs used for booking shipments.'],
+  email: ['EMAIL', 'Email', 'Connect mailboxes for sending and receiving operations mail.'],
+  whatsapp: ['WHATSAPP', 'WhatsApp', 'Connect Meta Cloud API for customer conversations.'],
+};
+
+const accountingCopy = {
+  vendors: ['ACCOUNTING', 'Vendors', 'Add and manage the vendors you buy from.'],
+  'purchase-orders': ['ACCOUNTING', 'Purchase orders', 'Record orders you place with vendors, with line items and totals.'],
+  expenses: ['ACCOUNTING', 'Expenses', 'Track bilty, transportation, and other costs — optionally linked to a purchase order.'],
+};
+
+export default function PortalShell({ section, category, user, tenant }) {
   const router = useRouter();
   const initials = `${user.firstName?.[0] ?? ''}${user.lastName?.[0] ?? user.email[0]}`.toUpperCase();
   const [notifications, setNotifications] = useState([]);
@@ -47,6 +63,12 @@ export default function PortalShell({ section, user, tenant }) {
     await api.logout().catch(() => {});
     router.replace('/login');
   }
+
+  const heading = section === 'Integrations' && category && integrationCopy[category]
+    ? integrationCopy[category]
+    : section === 'Accounting' && category && accountingCopy[category]
+    ? accountingCopy[category]
+    : ['OVERVIEW', section, section === 'Dashboard' ? 'A clear view of your commerce operations.' : section === 'Integrations' ? 'Connect website, courier, email, and WhatsApp from one place.' : section === 'Shipping' ? 'Filter shipments by courier, status, and city, and pull live data from connected couriers.' : section === 'Accounting' ? 'Vendors, purchase orders, and expenses in one place.' : `${section} workspace is ready for your team.`];
 
   return (
     <div className="portal">
@@ -64,7 +86,7 @@ export default function PortalShell({ section, user, tenant }) {
       </aside>
       <main className="portal-main">
         <header className="topbar">
-          <div><span className="breadcrumb">Workspace / </span><strong>{section}</strong></div>
+          <div><span className="breadcrumb">Workspace{section === 'Integrations' ? ' / Integrations' : ''} / </span><strong>{heading[1]}</strong></div>
           <div className="topbar-actions">
             <div className="notification-menu">
               <button className="icon-button" aria-label="Notifications" onClick={() => setShowNotifications((value) => !value)}>♢ {notifications.filter((item) => item.status === 'UNREAD').length || ''}</button>
@@ -83,33 +105,12 @@ export default function PortalShell({ section, user, tenant }) {
           </div>
         </header>
         <section className="content">
-          <div className="content-heading"><div><p className="eyebrow">OVERVIEW</p><h1>{section}</h1><p className="muted">{section === 'Dashboard' ? 'A clear view of your commerce operations.' : `${section} workspace is ready for your team.`}</p></div><span className="date-chip">Today · {new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span></div>
-          {section === 'Dashboard' ? <DashboardContent tenant={tenant} /> : section === 'Orders' ? <OrdersContent /> : section === 'Customers' ? <CustomersContent /> : section === 'Products' ? <ProductsContent /> : section === 'Shipping' ? <ShippingContent /> : section === 'Returns' ? <ReturnsContent /> : section === 'Inbox' ? <InboxContent /> : section === 'Support' ? <SupportContent /> : section === 'Campaigns' ? <CampaignsContent /> : section === 'Automations' ? <AutomationsContent /> : section === 'Reports' ? <ReportsContent /> : section === 'Integrations' ? <IntegrationsContent /> : section === 'Settings' ? <SettingsContent /> : <EmptyContent section={section} />}
+          <div className="content-heading"><div><p className="eyebrow">{heading[0]}</p><h1>{heading[1]}</h1><p className="muted">{heading[2]}</p></div><span className="date-chip">Today · {new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span></div>
+          {section === 'Dashboard' ? <DashboardContent tenant={tenant} /> : section === 'Orders' ? <OrdersContent /> : section === 'Customers' ? <CustomersContent /> : section === 'Products' ? <ProductsContent /> : section === 'Shipping' ? <ShippingContent /> : section === 'Returns' ? <ReturnsContent /> : section === 'Inbox' ? <InboxContent /> : section === 'Support' ? <SupportContent /> : section === 'Campaigns' ? <CampaignsContent /> : section === 'Automations' ? <AutomationsContent /> : section === 'Reports' ? <ReportsContent /> : section === 'Accounting' ? <AccountingContent category={category} /> : section === 'Integrations' ? <IntegrationsContent category={category} /> : section === 'Settings' ? <SettingsContent /> : <EmptyContent section={section} />}
         </section>
       </main>
     </div>
   );
 }
 
-function DashboardContent({ tenant }) {
-  const [summary, setSummary] = useState(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let active = true;
-    api.dashboardSummary().then((response) => {
-      if (active) setSummary(response.data ?? response);
-    }).catch((requestError) => {
-      if (active) setError(requestError.message || 'Unable to load dashboard metrics.');
-    });
-    return () => { active = false; };
-  }, []);
-
-  const period = (title, subtitle, cards) => <section className="dashboard-section"><div className="dashboard-section-heading"><div><h2>{title}</h2><p>{subtitle}</p></div></div><div className="stat-grid">{cards.map(([label, metric, formatter]) => <Stat key={label} label={label} value={summary ? formatter ? formatter(summary[metric]) : summary[metric] : '—'} hint={title} />)}</div></section>;
-
-  return <>{error && <div className="error">{error}</div>}{period('Today', 'Activity since midnight UTC.', [['Orders', 'todayOrders'], ['Revenue', 'todayRevenue', formatDashboardMoney], ['New customers', 'newCustomers'], ['Returning customers', 'returningCustomers']])}{period('This week', 'Orders and revenue from the current calendar week.', [['Orders', 'weeklyOrders'], ['Revenue', 'weeklyRevenue', formatDashboardMoney]])}{period('This month', 'Orders and revenue from the current calendar month.', [['Orders', 'monthlyOrders'], ['Revenue', 'monthlyRevenue', formatDashboardMoney]])}{period('Overall', 'Current status and all-time totals for this workspace.', [['Orders', 'overallOrders'], ['Revenue', 'overallRevenue', formatDashboardMoney], ['Pending', 'pendingOrders'], ['Out for delivery', 'outForDelivery'], ['Delivered', 'delivered'], ['Returned', 'returned']])}<div className="panel-grid"><div className="panel"><div className="panel-title"><div><h2>Getting started</h2><p>Set up your workspace for daily operations.</p></div><span className="panel-badge">Phase 1</span></div><div className="check-row"><span className="check done">✓</span><div><strong>Workspace created</strong><small>{tenant.name} is ready to configure.</small></div></div><div className="check-row"><span className="check">2</span><div><strong>Connect an integration</strong><small>Bring orders and customers into one place.</small></div><Link href="/integrations" className="text-link">View integrations →</Link></div><div className="check-row"><span className="check">3</span><div><strong>Invite your team</strong><small>Give operators the right access.</small></div><Link href="/settings" className="text-link">Manage settings →</Link></div></div><div className="panel quick-panel"><h2>Quick actions</h2><Link href="/orders" className="quick-action"><span>＋</span><div><strong>View orders</strong><small>Review operational order activity</small></div><b>→</b></Link><Link href="/integrations" className="quick-action"><span>◈</span><div><strong>Manage integrations</strong><small>Connect a commerce platform</small></div><b>→</b></Link></div></div></>;
-}
-
-function Stat({ label, value, hint }) { return <div className="stat-card"><span>{label}</span><strong>{value}</strong><small>{hint}</small></div>; }
-function formatDashboardMoney(value) { return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(Number(value ?? 0)); }
 function EmptyContent({ section }) { return <div className="empty-state"><div className="empty-icon">✦</div><h2>{section} is ready</h2><p>This area is part of your operations shell. Feature workflows will be added in the next phase.</p><Link href="/dashboard" className="button">Back to dashboard</Link></div>; }

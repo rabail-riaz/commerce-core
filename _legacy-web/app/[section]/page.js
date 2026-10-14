@@ -2,7 +2,7 @@ import PortalPage from '../components/PortalPage';
 
 const sections = new Set([
   'orders', 'customers', 'products', 'shipping', 'returns', 'inbox',
-  'support', 'campaigns', 'automations', 'reports', 'integrations', 'settings',
+  'support', 'campaigns', 'automations', 'reports', 'settings',
 ]);
 
 export default async function SectionPage({ params }) {

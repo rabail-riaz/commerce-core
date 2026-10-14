@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import PortalShell from './PortalShell';
 import { api, ApiError, clearSession } from '../lib/api-client';
 
-export default function PortalPage({ section }) {
+export default function PortalPage({ section, category }) {
   const router = useRouter();
   const [state, setState] = useState({ loading: true, user: null, tenant: null, error: '' });
 
@@ -33,5 +33,5 @@ export default function PortalPage({ section }) {
 
   if (state.loading) return <main className="portal-loading">Loading workspace…</main>;
   if (!state.user || !state.tenant) return null;
-  return <PortalShell section={section} user={state.user} tenant={state.tenant} />;
+  return <PortalShell section={section} category={category} user={state.user} tenant={state.tenant} />;
 }

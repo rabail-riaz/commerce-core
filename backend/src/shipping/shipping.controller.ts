@@ -6,7 +6,7 @@ import { RequirePermissions } from '../common/permissions.decorator';
 import { CurrentUser } from '../common/current-user.decorator';
 import { AuthContext } from '../common/auth.types';
 import { apiResponse } from '../common/api-response';
-import { CreateReturnDto, ShipmentQueryDto, UpdateReturnStatusDto } from './dto';
+import { CreateReturnDto, ShipmentQueryDto, SyncShipmentsDto, UpdateReturnStatusDto } from './dto';
 import { ShippingService } from './shipping.service';
 
 @ApiTags('shipping')
@@ -15,6 +15,18 @@ import { ShippingService } from './shipping.service';
 @Controller()
 export class ShippingController {
   constructor(private readonly service: ShippingService) {}
+
+  @Get('shipments/summary')
+  @RequirePermissions('shipping.read')
+  async summary(@CurrentUser() user: AuthContext) {
+    return apiResponse(await this.service.summarize(user.tenantId));
+  }
+
+  @Post('shipments/sync')
+  @RequirePermissions('shipping.book')
+  async sync(@CurrentUser() user: AuthContext, @Body() dto: SyncShipmentsDto = {}) {
+    return apiResponse(await this.service.syncFromCouriers(user.tenantId, dto ?? {}));
+  }
 
   @Get('shipments')
   @RequirePermissions('shipping.read')

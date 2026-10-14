@@ -1,13 +1,13 @@
 import { BadGatewayException, BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, ReturnStatus, ShipmentStatus } from '@prisma/client';
+import { OrderStatus, Prisma, ReturnStatus, ShipmentStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CouriersService } from '../couriers/couriers.service';
-import { CreateReturnDto, ShipmentQueryDto, UpdateReturnStatusDto } from './dto';
+import { CreateReturnDto, ShipmentQueryDto, SyncShipmentsDto, UpdateReturnStatusDto } from './dto';
 
 const shipmentInclude = {
   courierAccount: { include: { courier: true } },
   statusHistory: { orderBy: { createdAt: 'asc' as const } },
-  order: { select: { id: true, externalOrderId: true, status: true, customer: { select: { firstName: true, lastName: true, email: true } } } },
+  order: { select: { id: true, externalOrderId: true, sourceProvider: true, status: true, totalAmount: true, currency: true, shippingAddress: true, customer: { select: { firstName: true, lastName: true, email: true, phone: true } } } },
   return: { include: { statusHistory: { orderBy: { createdAt: 'asc' as const } } } },
 } satisfies Prisma.ShipmentInclude;
 
@@ -37,17 +37,102 @@ export class ShippingService {
   ) {}
 
   async listShipments(tenantId: string, query: ShipmentQueryDto) {
-    const where: Prisma.ShipmentWhereInput = { tenantId };
-    if (query.status && Object.values(ShipmentStatus).includes(query.status as ShipmentStatus)) where.status = query.status as ShipmentStatus;
-    if (query.trackingNumber) where.trackingNumber = { contains: query.trackingNumber, mode: 'insensitive' };
-    if (query.search) {
-      where.OR = [
-        { trackingNumber: { contains: query.search, mode: 'insensitive' } },
-        { externalShipmentId: { contains: query.search, mode: 'insensitive' } },
-        { order: { is: { externalOrderId: { contains: query.search, mode: 'insensitive' } } } },
-      ];
+    const where = await this.shipmentWhere(tenantId, query);
+    const skip = (query.page - 1) * query.limit;
+    const [items, total, summary] = await Promise.all([
+      this.prisma.shipment.findMany({ where, include: shipmentInclude, orderBy: { createdAt: 'desc' }, skip, take: query.limit }),
+      this.prisma.shipment.count({ where }),
+      this.summarize(tenantId),
+    ]);
+    return { items, page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit), summary };
+  }
+
+  async summarize(tenantId: string) {
+    const [accounts, grouped] = await Promise.all([
+      this.prisma.courierAccount.findMany({
+        where: { tenantId, status: 'ACTIVE' },
+        select: { id: true, name: true, courier: { select: { code: true, name: true } } },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.shipment.groupBy({
+        by: ['courierAccountId', 'status'],
+        where: { tenantId },
+        _count: { _all: true },
+      }),
+    ]);
+    const counts = new Map<string, { total: number; byStatus: Record<string, number> }>();
+    for (const row of grouped) {
+      const key = row.courierAccountId ?? 'unassigned';
+      const current = counts.get(key) ?? { total: 0, byStatus: {} };
+      current.total += row._count._all;
+      current.byStatus[row.status] = (current.byStatus[row.status] ?? 0) + row._count._all;
+      counts.set(key, current);
     }
-    return this.prisma.shipment.findMany({ where, include: shipmentInclude, orderBy: { createdAt: 'desc' } });
+    const couriers = accounts.map((account) => ({
+      accountId: account.id,
+      code: account.courier.code,
+      name: account.courier.name,
+      accountName: account.name,
+      canImport: this.couriers.canListShipments(account.courier.code),
+      ...(counts.get(account.id) ?? { total: 0, byStatus: {} }),
+    }));
+    const unassigned = counts.get('unassigned');
+    return {
+      total: [...counts.values()].reduce((sum, item) => sum + item.total, 0),
+      couriers,
+      ...(unassigned ? { unassigned } : {}),
+    };
+  }
+
+  async receiveCourierWebhook(courierCode: string, accountId: string, token: string, payload: Record<string, unknown>) {
+    const account = await this.prisma.courierAccount.findFirst({
+      where: { id: accountId, webhookToken: token, status: 'ACTIVE', courier: { is: { code: courierCode } } },
+      select: { id: true, tenantId: true, courier: { select: { code: true } } },
+    });
+    if (!account) throw new NotFoundException('Courier webhook not found');
+    const listing = this.couriers.parseWebhookEvent(account.courier.code, payload);
+    if (!listing) return { accepted: false, reason: 'Unrecognized payload shape' };
+    await this.upsertListedShipment(account.tenantId, account.id, account.courier.code, listing);
+    return { accepted: true };
+  }
+
+  async syncFromCouriers(tenantId: string, dto: SyncShipmentsDto = {}) {
+    const code = dto.courier?.trim().toUpperCase();
+    const to = dto.dateTo ? new Date(dto.dateTo) : new Date();
+    const from = dto.dateFrom ? new Date(dto.dateFrom) : new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const accounts = await this.prisma.courierAccount.findMany({
+      where: { tenantId, status: 'ACTIVE', ...(code ? { courier: { is: { code } } } : {}) },
+      include: { courier: true },
+    });
+    const result = { imported: 0, updated: 0, skipped: 0, failed: 0, errors: [] as Array<{ courier: string; message: string }> };
+    if (!accounts.length) throw new BadRequestException(code ? 'That courier is not connected' : 'Connect a courier in Integrations first');
+    for (const account of accounts) {
+      if (!this.couriers.canListShipments(account.courier.code)) {
+        result.skipped += 1;
+        continue;
+      }
+      try {
+        const listings = await this.couriers.listRemoteShipments(
+          account.courier.code,
+          this.credentials(account.credentials),
+          { from, to },
+        );
+        for (const listing of listings) {
+          const created = await this.upsertListedShipment(tenantId, account.id, account.courier.code, listing);
+          if (created) result.imported += 1;
+          else result.updated += 1;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Courier listing failed';
+        if (message.includes('does not expose a shipment list API')) {
+          result.skipped += 1;
+        } else {
+          result.failed += 1;
+          result.errors.push({ courier: account.courier.name, message });
+        }
+      }
+    }
+    return result;
   }
 
   async getShipment(tenantId: string, id: string) {
@@ -153,6 +238,134 @@ export class ShippingService {
         include: returnInclude,
       });
     });
+  }
+
+  private async shipmentWhere(tenantId: string, query: ShipmentQueryDto): Promise<Prisma.ShipmentWhereInput> {
+    const where: Prisma.ShipmentWhereInput = { tenantId };
+    if (query.status) where.status = query.status;
+    if (query.trackingNumber) where.trackingNumber = { contains: query.trackingNumber, mode: 'insensitive' };
+    if (query.courier) {
+      where.courierAccount = { is: { courier: { is: { code: query.courier.trim().toUpperCase() } } } };
+    }
+    if (query.dateFrom || query.dateTo) {
+      where.createdAt = {
+        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+        ...(query.dateTo ? { lte: new Date(`${query.dateTo}T23:59:59.999Z`) } : {}),
+      };
+    }
+    const orderFilter: Prisma.OrderWhereInput = {};
+    if (query.city) {
+      const cityMatches = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT id FROM "Order" WHERE "tenantId" = ${tenantId} AND LOWER("shippingAddress"->>'city') LIKE ${'%' + query.city.trim().toLowerCase() + '%'}
+      `);
+      orderFilter.id = { in: cityMatches.map((match) => match.id) };
+    }
+    if (query.search) {
+      where.OR = [
+        { trackingNumber: { contains: query.search, mode: 'insensitive' } },
+        { externalShipmentId: { contains: query.search, mode: 'insensitive' } },
+        { order: { is: { externalOrderId: { contains: query.search, mode: 'insensitive' } } } },
+        { order: { is: { customer: { is: { OR: [
+          { firstName: { contains: query.search, mode: 'insensitive' } },
+          { lastName: { contains: query.search, mode: 'insensitive' } },
+          { email: { contains: query.search, mode: 'insensitive' } },
+          { phone: { contains: query.search, mode: 'insensitive' } },
+        ] } } } } },
+      ];
+    }
+    if (Object.keys(orderFilter).length) {
+      where.order = { is: { ...(typeof where.order === 'object' && where.order && 'is' in where.order ? where.order.is : {}), ...orderFilter } };
+    }
+    return where;
+  }
+
+  private async upsertListedShipment(
+    tenantId: string,
+    courierAccountId: string,
+    courierCode: string,
+    listing: { trackingNumber: string; shipmentReference?: string; orderReference?: string; status: string; customerName?: string; customerPhone?: string; city?: string; address?: string; bookedAt?: Date; deliveredAt?: Date; raw?: Record<string, unknown> },
+  ) {
+    const status = this.shipmentStatus(listing.status);
+    const existing = await this.prisma.shipment.findFirst({
+      where: { tenantId, trackingNumber: listing.trackingNumber },
+      select: { id: true },
+    });
+    const orderId = await this.matchOrCreateOrder(tenantId, courierCode, listing);
+    const data = {
+      courierAccountId,
+      externalShipmentId: listing.shipmentReference ?? listing.trackingNumber,
+      trackingNumber: listing.trackingNumber,
+      status,
+      metadata: listing.raw as Prisma.InputJsonValue | undefined,
+      shippedAt: listing.bookedAt,
+      deliveredAt: status === ShipmentStatus.DELIVERED ? listing.deliveredAt ?? new Date() : listing.deliveredAt,
+    };
+    if (existing) {
+      await this.prisma.shipment.update({
+        where: { tenantId_id: { tenantId, id: existing.id } },
+        data,
+      });
+      return false;
+    }
+    const created = await this.prisma.shipment.create({
+      data: { tenantId, orderId, ...data },
+    });
+    await this.prisma.shipmentStatusHistory.create({
+      data: { tenantId, shipmentId: created.id, status, note: `${courierCode} import` },
+    });
+    return true;
+  }
+
+  private async matchOrCreateOrder(
+    tenantId: string,
+    courierCode: string,
+    listing: { trackingNumber: string; orderReference?: string; customerName?: string; customerPhone?: string; city?: string; address?: string; status: string },
+  ) {
+    const reference = listing.orderReference?.trim() || listing.trackingNumber;
+    const existing = await this.prisma.order.findFirst({
+      where: { tenantId, OR: [{ id: reference }, { externalOrderId: reference }] },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+    const names = (listing.customerName ?? '').trim().split(/\s+/).filter(Boolean);
+    const [firstName, ...rest] = names;
+    const orderStatus = this.orderStatusFromShipment(listing.status);
+    const created = await this.prisma.order.create({
+      data: {
+        tenantId,
+        sourceProvider: courierCode,
+        externalOrderId: reference,
+        subtotalAmount: 0,
+        totalAmount: 0,
+        currency: 'PKR',
+        status: orderStatus,
+        isCourierGenerated: true,
+        shippingAddress: {
+          firstName: firstName || undefined,
+          lastName: rest.join(' ') || undefined,
+          phone: listing.customerPhone,
+          addressLine1: listing.address,
+          city: listing.city,
+          country: 'PK',
+        },
+      },
+      select: { id: true },
+    });
+    await this.prisma.orderStatusHistory.create({
+      data: { tenantId, orderId: created.id, status: orderStatus, note: `${courierCode} shipment import` },
+    });
+    return created.id;
+  }
+
+  private orderStatusFromShipment(status: string): OrderStatus {
+    const mapped = this.shipmentStatus(status);
+    if (mapped === ShipmentStatus.DELIVERED) return OrderStatus.DELIVERED;
+    if (mapped === ShipmentStatus.OUT_FOR_DELIVERY) return OrderStatus.OUT_FOR_DELIVERY;
+    if (mapped === ShipmentStatus.CANCELLED) return OrderStatus.CANCELLED;
+    if (mapped === ShipmentStatus.RETURNED) return OrderStatus.RETURNED;
+    if (mapped === ShipmentStatus.FAILED) return OrderStatus.FAILED;
+    if (mapped === ShipmentStatus.PENDING) return OrderStatus.PROCESSING;
+    return OrderStatus.SHIPPED;
   }
 
   private credentials(value: Prisma.JsonValue | null): Record<string, unknown> {

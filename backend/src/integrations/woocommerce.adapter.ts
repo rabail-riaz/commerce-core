@@ -24,7 +24,7 @@ export class WooCommerceAdapter implements IntegrationAdapter {
 
     try {
       const parsed = this.parseCredentials(credentials);
-      const endpoint = `${parsed.url}/wp-json/wc/v3/system_status`;
+      const endpoint = `${parsed.url}/wp-json/wc/v3/orders?per_page=1`;
       const authorization = Buffer.from(`${parsed.key}:${parsed.secret}`, 'utf8').toString('base64');
       const response = await fetch(endpoint, {
         headers: { accept: 'application/json', authorization: `Basic ${authorization}` },

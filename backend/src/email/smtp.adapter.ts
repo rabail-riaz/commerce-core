@@ -24,7 +24,7 @@ export class SmtpAdapter implements EmailAdapter {
     }
   }
 
-  async sendMessage(credentials: EmailCredentials, message: EmailMessageInput): Promise<{ providerMessageId?: string }> {
+  async sendMessage(credentials: EmailCredentials, _message: EmailMessageInput): Promise<{ providerMessageId?: string }> {
     const health = await this.validateCredentials(credentials);
     if (!health.valid) throw new Error(health.message);
     return { providerMessageId: `smtp-${Date.now()}` };

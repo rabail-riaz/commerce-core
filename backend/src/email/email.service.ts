@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { EmailAccountStatus, EmailProvider, Prisma } from '@prisma/client';
+import { EmailAccountStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationEncryptionService } from '../integrations/integration-encryption.service';
 import { CreateEmailAccountDto, IngestEmailMessageDto, LinkEmailThreadDto, ReplyEmailDto, SaveEmailCredentialsDto, UpdateEmailAccountDto } from './dto';

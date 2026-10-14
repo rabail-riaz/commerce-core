@@ -4,7 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { MembershipRole, Prisma, User } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { LoginDto, RegisterDto } from './dto';
+import { LoginDto, RegisterDto, SelectTenantDto } from './dto';
 
 type AccessTokenPayload = {
   userId: string;
@@ -12,6 +12,11 @@ type AccessTokenPayload = {
   membershipId: string;
   role: MembershipRole;
   permissions: string[];
+};
+
+type TenantSelectionPayload = {
+  type: 'tenant-select';
+  userId: string;
 };
 
 type RefreshTokenPayload = {
@@ -76,9 +81,52 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const membership = user.memberships.find(
-      (candidate) => candidate.tenant.status === 'ACTIVE' && (!dto.tenantSlug || candidate.tenant.slug === dto.tenantSlug.trim().toLowerCase()),
-    );
+    const activeMemberships = user.memberships.filter((candidate) => candidate.tenant.status === 'ACTIVE');
+    if (activeMemberships.length === 0) throw new UnauthorizedException('No active tenant membership found');
+
+    if (dto.tenantSlug) {
+      const slug = dto.tenantSlug.trim().toLowerCase();
+      const membership = activeMemberships.find((candidate) => candidate.tenant.slug === slug);
+      if (!membership) throw new UnauthorizedException('No active tenant membership found');
+      return this.createSession(user, membership.tenantId, membership.id, membership.role, membership.permissions);
+    }
+
+    if (activeMemberships.length > 1) {
+      const selectionToken = await this.jwt.signAsync(
+        { type: 'tenant-select', userId: user.id } satisfies TenantSelectionPayload,
+        { secret: process.env.JWT_ACCESS_SECRET, expiresIn: '10m' },
+      );
+      return {
+        requiresTenantSelection: true as const,
+        selectionToken,
+        tenants: activeMemberships.map((candidate) => ({
+          tenantId: candidate.tenantId,
+          name: candidate.tenant.name,
+          slug: candidate.tenant.slug,
+          role: candidate.role,
+        })),
+      };
+    }
+
+    const membership = activeMemberships[0];
+    return this.createSession(user, membership.tenantId, membership.id, membership.role, membership.permissions);
+  }
+
+  async selectTenant(dto: SelectTenantDto) {
+    let payload: TenantSelectionPayload;
+    try {
+      payload = await this.jwt.verifyAsync<TenantSelectionPayload>(dto.selectionToken, { secret: process.env.JWT_ACCESS_SECRET });
+    } catch {
+      throw new UnauthorizedException('Invalid or expired selection token');
+    }
+    if (payload.type !== 'tenant-select') throw new UnauthorizedException('Invalid selection token');
+
+    const user = await this.prisma.user.findUnique({ where: { id: payload.userId } });
+    if (!user?.isActive) throw new UnauthorizedException('User account is inactive');
+
+    const membership = await this.prisma.membership.findFirst({
+      where: { userId: user.id, tenantId: dto.tenantId, tenant: { status: 'ACTIVE' } },
+    });
     if (!membership) throw new UnauthorizedException('No active tenant membership found');
     return this.createSession(user, membership.tenantId, membership.id, membership.role, membership.permissions);
   }

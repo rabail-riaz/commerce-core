@@ -1,3 +1,4 @@
+import { PrismaService } from '../prisma/prisma.service';
 import { BookShipmentRequest, CourierAdapter } from './courier-adapter';
 import { CourierAdapterRegistry } from './courier-adapter.registry';
 import { CouriersService } from './couriers.service';
@@ -29,7 +30,7 @@ describe('CouriersService', () => {
     };
     const registry = new CourierAdapterRegistry();
     registry.register(adapter);
-    return { adapter, service: new CouriersService(registry) };
+    return { adapter, service: new CouriersService(registry, {} as PrismaService) };
   }
 
   it('delegates shipment operations to the registered adapter', async () => {
@@ -47,6 +48,13 @@ describe('CouriersService', () => {
     expect(adapter.trackShipment).toHaveBeenCalledWith(credentials, 'TRACK-1');
     expect(adapter.getLabel).toHaveBeenCalledWith(credentials, 'shipment-1');
     expect(adapter.getStatus).toHaveBeenCalledWith(credentials, 'shipment-1');
+  });
+
+  it('exposes the Pakistan courier catalog for configuration', () => {
+    const { service } = setup();
+    const catalog = service.listCatalog();
+    expect(catalog.map((courier) => courier.code)).toEqual(expect.arrayContaining(['TCS', 'LEOPARDS', 'TRAX', 'POSTEX', 'RIDER', 'CALLCOURIER', 'BLUEEX']));
+    expect(catalog.length).toBeGreaterThanOrEqual(20);
   });
 
   it('rejects unsupported providers without provider-specific business logic', async () => {

@@ -3,9 +3,10 @@ import { OrdersService } from './orders.service';
 
 describe('OrdersService shipment booking', () => {
   const prisma = {
-    order: { findFirst: jest.fn() },
+    order: { findFirst: jest.fn(), update: jest.fn() },
     shipment: { findFirst: jest.fn() },
     courierAccount: { findFirst: jest.fn(), findMany: jest.fn() },
+    orderStatusHistory: { create: jest.fn() },
     $transaction: jest.fn(),
   };
   const couriers = { bookShipment: jest.fn() };
@@ -83,5 +84,45 @@ describe('OrdersService shipment booking', () => {
 
     await expect(service.bookShipment('tenant-1', 'order-1', { courierAccountId: 'account-1' })).rejects.toThrow('provider unavailable');
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('updates order status and writes timeline history', async () => {
+    prisma.order.findFirst
+      .mockResolvedValueOnce({ id: 'order-1', status: 'PENDING' })
+      .mockResolvedValueOnce({
+        id: 'order-1',
+        tenantId: 'tenant-1',
+        status: 'PROCESSING',
+        subtotalAmount: 10,
+        taxAmount: 0,
+        shippingAmount: 0,
+        discountAmount: 0,
+        totalAmount: 10,
+        currency: 'PKR',
+        paymentStatus: 'PAID',
+        paymentMethod: 'cod',
+        paymentReference: null,
+        shippingAddress: null,
+        billingAddress: null,
+        sourceProvider: 'WOOCOMMERCE',
+        externalOrderId: '101',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        customer: null,
+        store: { id: 'store-1', name: 'Elyzaar', status: 'ACTIVE' },
+        items: [],
+        statusHistory: [{ id: 'hist-1', status: 'PROCESSING', note: 'Status updated', createdAt: new Date() }],
+        shipments: [],
+      });
+    prisma.courierAccount.findMany.mockResolvedValue([]);
+    prisma.order.update.mockResolvedValue({});
+    prisma.orderStatusHistory.create.mockResolvedValue({});
+    prisma.$transaction.mockResolvedValue([]);
+
+    const result = await service.updateStatus('tenant-1', 'order-1', 'PROCESSING');
+
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(result.status).toBe('PROCESSING');
+    expect(result.externalOrderId).toBe('101');
   });
 });

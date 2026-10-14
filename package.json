@@ -3,15 +3,16 @@
   "private": true,
   "version": "0.1.0",
   "workspaces": [
-    "apps/*"
+    "backend",
+    "_legacy-web"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @commerce/api\" \"npm run dev -w @commerce/web\"",
-    "dev:api": "npm run dev -w @commerce/api",
-    "dev:web": "npm run dev -w @commerce/web",
-    "build": "npm run build -w @commerce/api && npm run build -w @commerce/web",
-    "lint": "npm run lint -w @commerce/api && npm run lint -w @commerce/web",
-    "test": "npm run test -w @commerce/api",
+    "dev": "concurrently -n api,legacy -c blue,green \"npm run dev -w @commerce/backend\" \"npm run dev -w @commerce/legacy-web\"",
+    "dev:api": "npm run dev -w @commerce/backend",
+    "dev:legacy": "npm run dev -w @commerce/legacy-web",
+    "build": "npm run build -w @commerce/backend && npm run build -w @commerce/legacy-web",
+    "lint": "npm run lint -w @commerce/backend && npm run lint -w @commerce/legacy-web",
+    "test": "npm run test -w @commerce/backend",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down"
   },
@@ -22,5 +23,12 @@
   },
   "dependencies": {
     "@prisma/client": "^6.2.1"
+  },
+  "allowScripts": {
+    "@prisma/engines@6.2.1": true,
+    "prisma@6.2.1": true,
+    "argon2@0.41.1": true,
+    "unrs-resolver@1.12.2": true,
+    "msgpackr-extract@3.0.4": true
   }
 }

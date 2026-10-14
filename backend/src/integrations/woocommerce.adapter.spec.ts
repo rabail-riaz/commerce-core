@@ -16,7 +16,7 @@ describe('WooCommerceAdapter', () => {
 
     expect(result.healthy).toBe(true);
     expect(global.fetch).toHaveBeenCalledWith(
-      'https://shop.example.com/wp-json/wc/v3/system_status',
+      'https://shop.example.com/wp-json/wc/v3/orders?per_page=1',
       expect.objectContaining({
         headers: expect.objectContaining({
           authorization: `Basic ${Buffer.from('ck_valid:cs_secret').toString('base64')}`,

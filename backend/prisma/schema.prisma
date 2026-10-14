@@ -153,6 +153,10 @@ model Tenant {
   whatsappMessages      WhatsAppMessage[]
   featureFlags          FeatureFlag[]
   subscription          TenantSubscription?
+  vendors               Vendor[]
+  purchaseOrders        PurchaseOrder[]
+  expenseCategories     ExpenseCategory[]
+  expenses              Expense[]
 }
 
 model User {
@@ -427,19 +431,26 @@ model CustomerScore {
 }
 
 model Product {
-  id                String           @id @default(cuid())
-  tenantId          String
-  externalProductId String?
-  storeId           String?
-  name              String
-  description       String?
-  status            ProductStatus    @default(ACTIVE)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  tenant            Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  store             Store?           @relation(fields: [tenantId, storeId], references: [tenantId, id], onDelete: Restrict)
-  variants          ProductVariant[]
-  orderItems        OrderItem[]
+  id                 String              @id @default(cuid())
+  tenantId           String
+  externalProductId  String?
+  storeId            String?
+  name               String
+  description        String?
+  imageUrl           String?
+  sku                String?
+  price              Decimal?            @db.Decimal(12, 2)
+  currency           String              @default("USD")
+  stockQuantity      Int?
+  stockStatus        String?
+  status             ProductStatus       @default(ACTIVE)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  store              Store?              @relation(fields: [tenantId, storeId], references: [tenantId, id], onDelete: Restrict)
+  variants           ProductVariant[]
+  orderItems         OrderItem[]
+  purchaseOrderItems PurchaseOrderItem[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, externalProductId])
@@ -464,7 +475,6 @@ model ProductVariant {
 
   @@unique([tenantId, id])
   @@unique([tenantId, externalVariantId])
-  @@unique([tenantId, sku])
   @@index([tenantId, productId])
   @@index([tenantId, sku])
 }
@@ -488,6 +498,7 @@ model Order {
   shippingAddress       Json?
   billingAddress        Json?
   status                OrderStatus            @default(PENDING)
+  isCourierGenerated    Boolean                @default(false)
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
   tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -527,17 +538,18 @@ model Courier {
 }
 
 model CourierAccount {
-  id          String            @id @default(cuid())
-  tenantId    String
-  courierId   String
-  name        String
-  credentials Json?
-  status      IntegrationStatus @default(ACTIVE)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  courier     Courier           @relation(fields: [tenantId, courierId], references: [tenantId, id], onDelete: Restrict)
-  shipments   Shipment[]
+  id           String            @id @default(cuid())
+  tenantId     String
+  courierId    String
+  name         String
+  credentials  Json?
+  webhookToken String?           @unique
+  status       IntegrationStatus @default(ACTIVE)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courier      Courier           @relation(fields: [tenantId, courierId], references: [tenantId, id], onDelete: Restrict)
+  shipments    Shipment[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, courierId, name])
@@ -1062,4 +1074,107 @@ model FeatureFlag {
 
   @@unique([key, tenantId, planId])
   @@index([key, enabled])
+}
+
+enum VendorStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Vendor {
+  id             String          @id @default(cuid())
+  tenantId       String
+  name           String
+  email          String?
+  phone          String?
+  address        String?
+  notes          String?
+  status         VendorStatus    @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status])
+  @@index([tenantId, name])
+}
+
+enum PurchaseOrderStatus {
+  PENDING
+  ORDERED
+  RECEIVED
+  PAID
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id          String              @id @default(cuid())
+  tenantId    String
+  vendorId    String
+  status      PurchaseOrderStatus @default(PENDING)
+  totalAmount Decimal             @default(0) @db.Decimal(12, 2)
+  currency    String              @default("USD")
+  note        String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  vendor      Vendor              @relation(fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
+  items       PurchaseOrderItem[]
+  expenses    Expense[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, vendorId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  tenantId        String
+  purchaseOrderId String
+  productId       String?
+  name            String
+  quantity        Int
+  unitPrice       Decimal       @db.Decimal(12, 2)
+  totalAmount     Decimal       @db.Decimal(12, 2)
+  createdAt       DateTime      @default(now())
+  purchaseOrder   PurchaseOrder @relation(fields: [tenantId, purchaseOrderId], references: [tenantId, id], onDelete: Cascade)
+  product         Product?      @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict)
+
+  @@index([tenantId, purchaseOrderId])
+  @@index([tenantId, productId])
+}
+
+model ExpenseCategory {
+  id        String    @id @default(cuid())
+  tenantId  String
+  name      String
+  createdAt DateTime  @default(now())
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  expenses  Expense[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, name])
+}
+
+model Expense {
+  id              String          @id @default(cuid())
+  tenantId        String
+  categoryId      String
+  purchaseOrderId String?
+  amount          Decimal         @db.Decimal(12, 2)
+  currency        String          @default("USD")
+  description     String?
+  expenseDate     DateTime        @default(now())
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category        ExpenseCategory @relation(fields: [tenantId, categoryId], references: [tenantId, id], onDelete: Restrict)
+  purchaseOrder   PurchaseOrder?  @relation(fields: [tenantId, purchaseOrderId], references: [tenantId, id], onDelete: SetNull)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, categoryId])
+  @@index([tenantId, purchaseOrderId])
+  @@index([tenantId, expenseDate])
 }

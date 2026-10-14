@@ -5,6 +5,7 @@ import { OrderQueryDto } from './dto';
 import { BookOrderShipmentDto } from './shipment.dto';
 import { BookShipmentRequest } from '../couriers/courier-adapter';
 import { CouriersService } from '../couriers/couriers.service';
+import { computeCustomerScore } from '../scoring/scoring';
 
 const orderListSelect = {
   id: true,
@@ -18,7 +19,13 @@ const orderListSelect = {
   createdAt: true,
   updatedAt: true,
   store: { select: { id: true, name: true } },
-  customer: { select: { id: true, email: true, firstName: true, lastName: true } },
+  customer: { select: { id: true, email: true, firstName: true, lastName: true, phone: true } },
+  shippingAddress: true,
+  shipments: {
+    take: 1,
+    orderBy: { createdAt: 'desc' as const },
+    select: { trackingNumber: true, status: true, courierAccount: { select: { courier: { select: { name: true } } } } },
+  },
 } satisfies Prisma.OrderSelect;
 
 @Injectable()
@@ -29,13 +36,26 @@ export class OrdersService {
   ) {}
 
   async list(tenantId: string, query: OrderQueryDto) {
-    const where = this.buildWhere(tenantId, query);
+    const where = await this.buildWhere(tenantId, query);
     const skip = (query.page - 1) * query.limit;
     const orderBy = { [query.sortBy]: query.sortOrder } as Prisma.OrderOrderByWithRelationInput;
-    const [items, total] = await this.prisma.$transaction([
+    const [rows, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({ where, select: orderListSelect, orderBy, skip, take: query.limit }),
       this.prisma.order.count({ where }),
     ]);
+    const byPhone = await this.ordersByPhone(tenantId);
+    const items = rows.map(({ shipments, customer, shippingAddress, ...order }) => {
+      const phone = this.shippingAddress(shippingAddress).phone || customer?.phone?.trim() || null;
+      const phoneKey = this.phoneKey(phone);
+      const history = phoneKey ? byPhone.get(phoneKey) : undefined;
+      return {
+        ...order,
+        customer,
+        customerPhone: phone,
+        shipment: shipments[0] ?? null,
+        customerInsights: history ? this.computeInsightsFromOrders(history, order.id) : null,
+      };
+    });
     return { items, page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) };
   }
 
@@ -65,6 +85,9 @@ export class OrdersService {
       select: { id: true, name: true, courier: { select: { code: true, name: true } } },
       orderBy: { name: 'asc' },
     });
+    const orderPhone = this.shippingAddress(order.shippingAddress).phone || order.customer?.phone?.trim() || null;
+    const phoneKey = this.phoneKey(orderPhone);
+    const customerInsights = phoneKey ? this.computeInsightsFromOrders(await this.ordersForPhone(tenantId, phoneKey), order.id) : null;
     return {
       id: order.id,
       tenantId: order.tenantId,
@@ -72,6 +95,7 @@ export class OrdersService {
       sourceProvider: order.sourceProvider,
       externalOrderId: order.externalOrderId,
       customer: order.customer,
+      customerPhone: orderPhone,
       products: order.items,
       amount: {
         subtotal: order.subtotalAmount,
@@ -97,8 +121,65 @@ export class OrdersService {
       shipments: order.shipments,
       courierAccounts,
       communicationHistory: [],
+      customerInsights,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
+    };
+  }
+
+  private phoneKey(phone?: string | null): string {
+    if (!phone) return '';
+    return phone.replace(/\D/g, '').slice(-10);
+  }
+
+  private async ordersForPhone(tenantId: string, phoneKey: string) {
+    return this.prisma.$queryRaw<Array<{ id: string; status: OrderStatus; createdAt: Date }>>(Prisma.sql`
+      SELECT o.id, o.status, o."createdAt"
+      FROM "Order" o
+      LEFT JOIN "Customer" c ON c.id = o."customerId" AND c."tenantId" = o."tenantId"
+      WHERE o."tenantId" = ${tenantId} AND o."isCourierGenerated" = false
+        AND RIGHT(regexp_replace(COALESCE(NULLIF(o."shippingAddress"->>'phone', ''), c.phone, ''), '[^0-9]', '', 'g'), 10) = ${phoneKey}
+      ORDER BY o."createdAt" ASC
+    `);
+  }
+
+  private async ordersByPhone(tenantId: string) {
+    const rows = await this.prisma.$queryRaw<Array<{ id: string; status: OrderStatus; createdAt: Date; phoneKey: string }>>(Prisma.sql`
+      SELECT o.id, o.status, o."createdAt",
+        RIGHT(regexp_replace(COALESCE(NULLIF(o."shippingAddress"->>'phone', ''), c.phone, ''), '[^0-9]', '', 'g'), 10) AS "phoneKey"
+      FROM "Order" o
+      LEFT JOIN "Customer" c ON c.id = o."customerId" AND c."tenantId" = o."tenantId"
+      WHERE o."tenantId" = ${tenantId} AND o."isCourierGenerated" = false
+      ORDER BY o."createdAt" ASC
+    `);
+    const byPhone = new Map<string, typeof rows>();
+    for (const row of rows) {
+      if (!row.phoneKey) continue;
+      const list = byPhone.get(row.phoneKey) ?? [];
+      list.push(row);
+      byPhone.set(row.phoneKey, list);
+    }
+    return byPhone;
+  }
+
+  private computeInsightsFromOrders(orders: Array<{ id: string; status: OrderStatus; createdAt: Date }>, currentOrderId: string) {
+    const index = orders.findIndex((order) => order.id === currentOrderId);
+    const isReturn = (status: OrderStatus) => status === OrderStatus.RETURNED || status === OrderStatus.RETURN_REQUESTED;
+    const since = new Date(Date.now() - 90 * 86400000);
+    const { score, classification } = computeCustomerScore({
+      delivered: orders.filter((order) => order.status === OrderStatus.DELIVERED).length,
+      returned: orders.filter((order) => isReturn(order.status)).length,
+      cancelled: orders.filter((order) => order.status === OrderStatus.CANCELLED).length,
+      refused: orders.filter((order) => order.status === OrderStatus.FAILED).length,
+      totalOrders: orders.length,
+      ordersLast90Days: orders.filter((order) => order.createdAt >= since).length,
+    });
+    return {
+      orderNumber: index >= 0 ? index + 1 : orders.length,
+      totalOrders: orders.length,
+      priorReturns: orders.slice(0, index >= 0 ? index : orders.length).filter((order) => isReturn(order.status)).length,
+      score,
+      classification,
     };
   }
 
@@ -178,10 +259,41 @@ export class OrdersService {
     return { shipment, trackingNumber: shipment.trackingNumber };
   }
 
+  async updateStatus(tenantId: string, id: string, status: OrderStatus, note?: string) {
+    const order = await this.prisma.order.findFirst({ where: { tenantId, id }, select: { id: true, status: true } });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.status !== status) {
+      await this.prisma.$transaction([
+        this.prisma.order.update({ where: { tenantId_id: { tenantId, id } }, data: { status } }),
+        this.prisma.orderStatusHistory.create({
+          data: { tenantId, orderId: id, status, note: note?.trim() || 'Status updated' },
+        }),
+      ]);
+    }
+    return this.getById(tenantId, id);
+  }
+
   private shippingAddress(value: Prisma.JsonValue | null): Record<string, string> {
-    return value && typeof value === 'object' && !Array.isArray(value)
-      ? Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === 'string')) as Record<string, string>
-      : {};
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const record = value as Record<string, unknown>;
+    const pick = (...keys: string[]) => {
+      for (const key of keys) {
+        const item = record[key];
+        if (typeof item === 'string' && item.trim()) return item;
+      }
+      return undefined;
+    };
+    return Object.fromEntries(Object.entries({
+      firstName: pick('firstName', 'first_name'),
+      lastName: pick('lastName', 'last_name'),
+      phone: pick('phone'),
+      addressLine1: pick('addressLine1', 'address_1'),
+      addressLine2: pick('addressLine2', 'address_2'),
+      city: pick('city'),
+      state: pick('state'),
+      postalCode: pick('postalCode', 'postcode'),
+      country: pick('country') ?? 'PK',
+    }).filter(([, item]) => Boolean(item))) as Record<string, string>;
   }
 
   private credentials(value: Prisma.JsonValue | null): Record<string, unknown> {
@@ -192,8 +304,8 @@ export class OrdersService {
     return Object.values(ShipmentStatus).includes(value as ShipmentStatus) ? value as ShipmentStatus : ShipmentStatus.PENDING;
   }
 
-  private buildWhere(tenantId: string, query: OrderQueryDto): Prisma.OrderWhereInput {
-    const where: Prisma.OrderWhereInput = { tenantId };
+  private async buildWhere(tenantId: string, query: OrderQueryDto): Promise<Prisma.OrderWhereInput> {
+    const where: Prisma.OrderWhereInput = { tenantId, isCourierGenerated: false };
     if (query.status) where.status = query.status;
     if (query.storeId) where.storeId = query.storeId;
     if (query.customerId) where.customerId = query.customerId;
@@ -205,18 +317,34 @@ export class OrdersService {
       };
     }
     if (query.city) {
-      where.shippingAddress = { path: ['city'], string_contains: query.city };
+      const cityMatches = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT id FROM "Order" WHERE "tenantId" = ${tenantId} AND LOWER("shippingAddress"->>'city') LIKE ${'%' + query.city.trim().toLowerCase() + '%'}
+      `);
+      where.id = { in: cityMatches.map((match) => match.id) };
     }
     if (query.search) {
-      where.OR = [
+      const searchOr: Prisma.OrderWhereInput[] = [
         { externalOrderId: { contains: query.search, mode: 'insensitive' } },
         { sourceProvider: { contains: query.search, mode: 'insensitive' } },
         { customer: { is: { email: { contains: query.search, mode: 'insensitive' } } } },
         { customer: { is: { firstName: { contains: query.search, mode: 'insensitive' } } } },
         { customer: { is: { lastName: { contains: query.search, mode: 'insensitive' } } } },
+        { shippingAddress: { path: ['phone'], string_contains: query.search } },
         { items: { some: { name: { contains: query.search, mode: 'insensitive' } } } },
         { items: { some: { sku: { contains: query.search, mode: 'insensitive' } } } },
       ];
+      const digits = query.search.replace(/\D/g, '');
+      if (digits.length >= 4) {
+        const phoneKey = digits.slice(-10);
+        const matches = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          SELECT o.id FROM "Order" o
+          LEFT JOIN "Customer" c ON c.id = o."customerId" AND c."tenantId" = o."tenantId"
+          WHERE o."tenantId" = ${tenantId}
+            AND RIGHT(regexp_replace(COALESCE(NULLIF(o."shippingAddress"->>'phone', ''), c.phone, ''), '[^0-9]', '', 'g'), 10) LIKE ${'%' + phoneKey}
+        `);
+        if (matches.length) searchOr.push({ id: { in: matches.map((match) => match.id) } });
+      }
+      where.OR = searchOr;
     }
     return where;
   }

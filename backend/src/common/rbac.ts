@@ -28,6 +28,10 @@ export const PERMISSIONS = [
   'automations.manage',
   'settings.manage',
   'exports.create',
+  'accounting.read',
+  'accounting.create',
+  'accounting.update',
+  'accounting.delete',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -56,6 +60,10 @@ const MANAGER_PERMISSIONS: Permission[] = [
   'reports.read',
   'automations.read',
   'automations.manage',
+  'accounting.read',
+  'accounting.create',
+  'accounting.update',
+  'accounting.delete',
 ];
 
 export const ROLE_PERMISSIONS: Record<MembershipRole, readonly Permission[]> = {

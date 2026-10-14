@@ -9,14 +9,16 @@ describe('CustomersService', () => {
       findFirst: jest.fn(),
     },
     order: {
-      aggregate: jest.fn(),
+      findMany: jest.fn(),
     },
+    $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   };
   const service = new CustomersService(prisma as never);
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.$queryRaw.mockResolvedValue([]);
   });
 
   it('scopes customer searches and counts to the active tenant', async () => {
@@ -50,31 +52,62 @@ describe('CustomersService', () => {
       addresses: [],
       tags: [],
       score: null,
-      orders: [{ id: 'order-a', totalAmount: 25, currency: 'USD' }],
+      tickets: [],
+      emailThreads: [],
+      whatsappConversations: [],
     });
-    prisma.order.aggregate.mockResolvedValue({ _count: { _all: 1 }, _sum: { totalAmount: 25 } });
+    prisma.order.findMany.mockResolvedValue([{ id: 'order-a', totalAmount: 25, currency: 'USD', returns: [], shipments: [] }]);
 
     const result = await service.getById('tenant-a', 'customer-a');
 
     expect(prisma.customer.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { tenantId: 'tenant-a', id: 'customer-a' },
-      include: expect.objectContaining({
-        orders: expect.objectContaining({ where: { tenantId: 'tenant-a' } }),
-      }),
     }));
-    expect(prisma.order.aggregate).toHaveBeenCalledWith({
+    // No phone on file, so order history falls back to the customerId relationship, still tenant-scoped.
+    expect(prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { tenantId: 'tenant-a', customerId: 'customer-a' },
-      _count: { _all: true },
-      _sum: { totalAmount: true },
-    });
+    }));
     expect(result.orders).toHaveLength(1);
     expect(result.spending.orderCount).toBe(1);
+    expect(result.spending.total).toBe(25);
+  });
+
+  it('matches order history by phone number when the customer has one on file', async () => {
+    prisma.customer.findFirst.mockResolvedValue({
+      id: 'customer-a',
+      email: 'alex@example.com',
+      firstName: 'Alex',
+      lastName: 'Stone',
+      phone: '0332-8205191',
+      status: 'ACTIVE',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      addresses: [],
+      tags: [],
+      score: null,
+      tickets: [],
+      emailThreads: [],
+      whatsappConversations: [],
+    });
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'order-a' }, { id: 'order-b' }]);
+    prisma.order.findMany.mockResolvedValue([
+      { id: 'order-a', totalAmount: 25, currency: 'USD', returns: [], shipments: [] },
+      { id: 'order-b', totalAmount: 10, currency: 'USD', returns: [], shipments: [] },
+    ]);
+
+    const result = await service.getById('tenant-a', 'customer-a');
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tenantId: 'tenant-a', id: { in: ['order-a', 'order-b'] } },
+    }));
+    expect(result.spending.orderCount).toBe(2);
+    expect(result.spending.total).toBe(35);
   });
 
   it('does not reveal a customer from another tenant', async () => {
     prisma.customer.findFirst.mockResolvedValue(null);
 
     await expect(service.getById('tenant-a', 'customer-from-b')).rejects.toBeInstanceOf(NotFoundException);
-    expect(prisma.order.aggregate).not.toHaveBeenCalled();
+    expect(prisma.order.findMany).not.toHaveBeenCalled();
   });
 });

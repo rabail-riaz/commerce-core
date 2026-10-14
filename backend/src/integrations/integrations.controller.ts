@@ -29,6 +29,12 @@ export class IntegrationsController {
     return apiResponse(await this.service.list(user.tenantId, pagination));
   }
 
+  @Get('overview')
+  @RequirePermissions('integrations.read')
+  async overview(@CurrentUser() user: AuthContext) {
+    return apiResponse(await this.service.overview(user.tenantId));
+  }
+
   @Get(':id')
   @RequirePermissions('integrations.read')
   async getById(@CurrentUser() user: AuthContext, @Param('id') id: string) {
@@ -51,6 +57,12 @@ export class IntegrationsController {
   @RequirePermissions('integrations.manage')
   async sync(@CurrentUser() user: AuthContext, @Param('id') id: string) {
     return apiResponse(await this.service.startInitialSync(user.tenantId, id));
+  }
+
+  @Post(':id/sync-products')
+  @RequirePermissions('integrations.manage')
+  async syncProducts(@CurrentUser() user: AuthContext, @Param('id') id: string) {
+    return apiResponse(await this.service.syncProductsNow(user.tenantId, id));
   }
 
   @Post(':id/reconcile')

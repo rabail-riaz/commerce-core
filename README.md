@@ -4,7 +4,7 @@ Commerce Operations SaaS is a multi-tenant operations platform. The current repo
 
 ## Architecture
 
-`Next.js (apps/web) → NestJS REST API (apps/api) → PostgreSQL`
+`Next.js (_legacy-web, being replaced by frontend) → NestJS REST API (backend) → PostgreSQL`
 
 The browser only receives the public API URL. Database, authentication, and future provider credentials stay in the API environment.
 
@@ -26,8 +26,8 @@ The browser only receives the public API URL. Database, authentication, and futu
 
    ```bash
    cp .env.example .env
-   cp apps/api/.env.example apps/api/.env
-   cp apps/web/.env.example apps/web/.env
+   cp backend/.env.example backend/.env
+   cp _legacy-web/.env.example _legacy-web/.env
    ```
 
    Replace both JWT placeholder values with unique secrets of at least 32 characters. Keep the root and API database/JWT settings aligned.
@@ -41,8 +41,8 @@ The browser only receives the public API URL. Database, authentication, and futu
 4. Generate the Prisma client and apply the initial migration:
 
    ```bash
-   npm run prisma:generate -w @commerce/api
-   npm run prisma:migrate -w @commerce/api -- --name init
+   npm run prisma:generate -w @commerce/backend
+   npm run prisma:migrate -w @commerce/backend -- --name init
    ```
 
 5. Run both applications:
@@ -62,7 +62,7 @@ npm run dev:api
 npm run dev:web
 ```
 
-The API uses `apps/api/.env`. The portal uses `apps/web/.env`; only `NEXT_PUBLIC_API_URL` belongs there and it must never contain a secret.
+The API uses `backend/.env`. The portal uses `_legacy-web/.env`; only `NEXT_PUBLIC_API_URL` belongs there and it must never contain a secret.
 
 ## Validation commands
 

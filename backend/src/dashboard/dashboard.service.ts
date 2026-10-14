@@ -49,7 +49,7 @@ export class DashboardService {
       tenant_orders AS (
         SELECT "id", "customerId", "status", "totalAmount", "createdAt"
         FROM "Order"
-        WHERE "tenantId" = ${tenantId}
+        WHERE "tenantId" = ${tenantId} AND "isCourierGenerated" = false
       ),
       today_customers AS (
         SELECT DISTINCT "customerId"

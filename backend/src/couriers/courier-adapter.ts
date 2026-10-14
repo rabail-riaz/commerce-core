@@ -60,12 +60,34 @@ export type ShipmentStatusResult = {
   raw?: Record<string, unknown>;
 };
 
+export type ListedShipment = {
+  trackingNumber: string;
+  shipmentReference?: string;
+  orderReference?: string;
+  status: string;
+  customerName?: string;
+  customerPhone?: string;
+  city?: string;
+  address?: string;
+  bookedAt?: Date;
+  deliveredAt?: Date;
+  raw?: Record<string, unknown>;
+};
+
+export type ListShipmentsRange = {
+  from?: Date;
+  to?: Date;
+};
+
 export interface CourierAdapter {
   readonly code: string;
   validateCredentials?(credentials: CourierCredentials): Promise<{ valid: boolean; message: string }>;
+  listShipments?(credentials: CourierCredentials, range?: ListShipmentsRange): Promise<ListedShipment[]>;
   bookShipment(credentials: CourierCredentials, request: BookShipmentRequest): Promise<BookShipmentResult>;
   cancelShipment(credentials: CourierCredentials, shipmentReference: string): Promise<CancelShipmentResult>;
   trackShipment(credentials: CourierCredentials, trackingNumber: string): Promise<TrackShipmentResult>;
   getLabel(credentials: CourierCredentials, shipmentReference: string): Promise<ShipmentLabel>;
   getStatus(credentials: CourierCredentials, shipmentReference: string): Promise<ShipmentStatusResult>;
+  /** Parses a courier's webhook/push payload into a shipment update. Return null when the payload doesn't resolve to a shipment. */
+  parseWebhookEvent?(payload: Record<string, unknown>): ListedShipment | null;
 }

@@ -60,3 +60,12 @@ export class OrderQueryDto {
   @IsIn(['asc', 'desc'])
   sortOrder: 'asc' | 'desc' = 'desc';
 }
+
+export class UpdateOrderStatusDto {
+  @IsEnum(OrderStatus)
+  status!: OrderStatus;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}

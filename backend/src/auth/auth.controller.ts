@@ -3,7 +3,7 @@ import {ApiBearerAuth, ApiTags} from '@nestjs/swagger';
 import {CurrentUser} from '../common/current-user.decorator';
 import {AuthService} from './auth.service';
 import {JwtAuthGuard} from './jwt-auth.guard';
-import {LoginDto, RefreshDto, RegisterDto} from './dto';
+import {LoginDto, RefreshDto, RegisterDto, SelectTenantDto} from './dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -17,6 +17,10 @@ export class AuthController {
 
     @Post('login') login(@Body() dto: LoginDto) {
         return this.auth.login(dto);
+    }
+
+    @Post('select-tenant') selectTenant(@Body() dto: SelectTenantDto) {
+        return this.auth.selectTenant(dto);
     }
 
     @Post('refresh') refresh(@Body() dto: RefreshDto) {

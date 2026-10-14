@@ -17,6 +17,20 @@ const customerSelect = {
   _count: { select: { orders: true } },
 } satisfies Prisma.CustomerSelect;
 
+const orderHistorySelect = {
+  id: true,
+  externalOrderId: true,
+  sourceProvider: true,
+  status: true,
+  paymentStatus: true,
+  paymentMethod: true,
+  totalAmount: true,
+  currency: true,
+  createdAt: true,
+  shipments: { select: { id: true, trackingNumber: true, status: true, createdAt: true } },
+  returns: { select: { id: true, status: true, reason: true, createdAt: true } },
+} satisfies Prisma.OrderSelect;
+
 @Injectable()
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -24,7 +38,7 @@ export class CustomersService {
   async list(tenantId: string, query: CustomerQueryDto) {
     const where = this.buildWhere(tenantId, query.search);
     const skip = (query.page - 1) * query.limit;
-    const [items, total] = await this.prisma.$transaction([
+    const [rows, total] = await this.prisma.$transaction([
       this.prisma.customer.findMany({
         where,
         select: customerSelect,
@@ -34,6 +48,12 @@ export class CustomersService {
       }),
       this.prisma.customer.count({ where }),
     ]);
+    const statsByPhone = await this.orderStatsByPhone(tenantId);
+    const items = rows.map(({ _count, ...customer }) => {
+      const phoneKey = this.phoneKey(customer.phone);
+      const stats = phoneKey ? statsByPhone.get(phoneKey) : undefined;
+      return { ...customer, _count: { orders: stats?.count ?? _count.orders } };
+    });
     return { items, page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) };
   }
 
@@ -48,31 +68,16 @@ export class CustomersService {
         tickets: { orderBy: { createdAt: 'desc' }, take: 20 },
         emailThreads: { orderBy: { lastMessageAt: 'desc' }, take: 20, select: { id: true, subject: true, lastMessageAt: true, unreadCount: true } },
         whatsappConversations: { orderBy: { lastMessageAt: 'desc' }, take: 20, select: { id: true, customerPhone: true, lastMessageAt: true, unreadCount: true } },
-        orders: {
-          where: { tenantId },
-          select: {
-            id: true,
-            externalOrderId: true,
-            sourceProvider: true,
-            status: true,
-            paymentStatus: true,
-            paymentMethod: true,
-            totalAmount: true,
-            currency: true,
-            createdAt: true,
-            shipments: { select: { id: true, trackingNumber: true, status: true, createdAt: true } },
-            returns: { select: { id: true, status: true, reason: true, createdAt: true } },
-          },
-          orderBy: { createdAt: 'desc' },
-        },
       },
     });
     if (!customer) throw new NotFoundException('Customer not found');
 
-    const spending = await this.prisma.order.aggregate({
-      where: { tenantId, customerId: id },
-      _count: { _all: true },
-      _sum: { totalAmount: true },
+    const phoneKey = this.phoneKey(customer.phone);
+    const matchedOrderIds = phoneKey ? await this.orderIdsForPhone(tenantId, phoneKey) : [];
+    const orders = await this.prisma.order.findMany({
+      where: matchedOrderIds.length ? { tenantId, id: { in: matchedOrderIds } } : { tenantId, customerId: id },
+      select: orderHistorySelect,
+      orderBy: { createdAt: 'desc' },
     });
 
     return {
@@ -86,10 +91,14 @@ export class CustomersService {
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
       },
-      orders: customer.orders,
-      spending: { orderCount: spending._count._all, total: spending._sum.totalAmount ?? 0, currency: customer.orders[0]?.currency ?? 'USD' },
-      returns: customer.orders.flatMap((order) => order.returns ?? []),
-      shipments: customer.orders.flatMap((order) => order.shipments ?? []),
+      orders,
+      spending: {
+        orderCount: orders.length,
+        total: orders.reduce((sum, order) => sum + Number(order.totalAmount), 0),
+        currency: orders[0]?.currency ?? 'USD',
+      },
+      returns: orders.flatMap((order) => order.returns ?? []),
+      shipments: orders.flatMap((order) => order.shipments ?? []),
       tickets: customer.tickets ?? [],
       whatsapp: customer.whatsappConversations ?? [],
       email: customer.emailThreads ?? [],
@@ -112,5 +121,38 @@ export class CustomersService {
       ];
     }
     return where;
+  }
+
+  private phoneKey(phone?: string | null): string {
+    if (!phone) return '';
+    return phone.replace(/\D/g, '').slice(-10);
+  }
+
+  private async orderIdsForPhone(tenantId: string, phoneKey: string) {
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT o.id FROM "Order" o
+      LEFT JOIN "Customer" c ON c.id = o."customerId" AND c."tenantId" = o."tenantId"
+      WHERE o."tenantId" = ${tenantId} AND o."isCourierGenerated" = false
+        AND RIGHT(regexp_replace(COALESCE(NULLIF(o."shippingAddress"->>'phone', ''), c.phone, ''), '[^0-9]', '', 'g'), 10) = ${phoneKey}
+    `);
+    return rows.map((row) => row.id);
+  }
+
+  private async orderStatsByPhone(tenantId: string) {
+    const rows = await this.prisma.$queryRaw<Array<{ phoneKey: string; count: bigint }>>(Prisma.sql`
+      SELECT
+        RIGHT(regexp_replace(COALESCE(NULLIF(o."shippingAddress"->>'phone', ''), c.phone, ''), '[^0-9]', '', 'g'), 10) AS "phoneKey",
+        COUNT(*)::bigint AS count
+      FROM "Order" o
+      LEFT JOIN "Customer" c ON c.id = o."customerId" AND c."tenantId" = o."tenantId"
+      WHERE o."tenantId" = ${tenantId} AND o."isCourierGenerated" = false
+      GROUP BY 1
+    `);
+    const map = new Map<string, { count: number }>();
+    for (const row of rows) {
+      if (!row.phoneKey) continue;
+      map.set(row.phoneKey, { count: Number(row.count) });
+    }
+    return map;
   }
 }

@@ -11,11 +11,11 @@ const compat = new FlatCompat({ baseDirectory });
 export default defineConfig([
   globalIgnores(['**/node_modules/**', '**/.next/**', '**/dist/**', '**/coverage/**']),
   {
-    files: ['apps/api/src/**/*.ts', 'apps/api/test/**/*.ts'],
+    files: ['backend/src/**/*.ts', 'backend/test/**/*.ts'],
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {
-        project: './apps/api/tsconfig.json',
+        project: './backend/tsconfig.json',
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -29,7 +29,7 @@ export default defineConfig([
     ...config,
     settings: {
       ...config.settings,
-      next: { ...config.settings?.next, rootDir: 'apps/web/' },
+      next: { ...config.settings?.next, rootDir: '_legacy-web/' },
     },
   })),
 ]);
