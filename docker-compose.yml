@@ -15,6 +15,8 @@ services:
     build:
       context: .
       dockerfile: _legacy-web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001/api/v1}
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001/api/v1}
     ports: [ "127.0.0.1:3000:3000" ]
