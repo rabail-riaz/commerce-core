@@ -135,6 +135,24 @@ export class ShippingService {
     return result;
   }
 
+  async syncAllTenants() {
+    const accounts = await this.prisma.courierAccount.findMany({
+      where: { status: 'ACTIVE' },
+      select: { tenantId: true },
+      distinct: ['tenantId'],
+    });
+    const results: Array<{ tenantId: string; imported?: number; updated?: number; skipped?: number; failed?: number; error?: string }> = [];
+    for (const { tenantId } of accounts) {
+      try {
+        const result = await this.syncFromCouriers(tenantId, {});
+        results.push({ tenantId, ...result });
+      } catch (error) {
+        results.push({ tenantId, error: error instanceof Error ? error.message : 'Courier sync failed' });
+      }
+    }
+    return results;
+  }
+
   async getShipment(tenantId: string, id: string) {
     const shipment = await this.prisma.shipment.findFirst({ where: { tenantId, id }, include: shipmentInclude });
     if (!shipment) throw new NotFoundException('Shipment not found');

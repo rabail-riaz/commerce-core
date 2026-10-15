@@ -80,6 +80,22 @@ describe('ShippingService order shipment return flow', () => {
     }));
   });
 
+  it('syncs every tenant with an active courier account, not just one order', async () => {
+    prisma.courierAccount.findMany
+      .mockResolvedValueOnce([{ tenantId: 'tenant-1' }, { tenantId: 'tenant-2' }])
+      .mockResolvedValueOnce([{ id: 'account-1', credentials: {}, courier: { code: 'POSTEX', name: 'PostEx' } }])
+      .mockResolvedValueOnce([]);
+    couriers.canListShipments.mockReturnValue(true);
+    couriers.listRemoteShipments.mockResolvedValue([]);
+
+    const results = await service.syncAllTenants();
+
+    expect(results).toEqual([
+      { tenantId: 'tenant-1', imported: 0, updated: 0, skipped: 0, failed: 0, errors: [] },
+      { tenantId: 'tenant-2', error: 'Connect a courier in Integrations first' },
+    ]);
+  });
+
   it('filters and paginates shipments by courier', async () => {
     prisma.shipment.findMany.mockResolvedValue([]);
     prisma.shipment.count.mockResolvedValue(0);
