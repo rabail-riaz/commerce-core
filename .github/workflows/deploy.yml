@@ -1,0 +1,26 @@
+name: Deploy to unifiedserver
+
+# Runs only on pushes to main (i.e. after a PR is merged) on the self-hosted
+# runner registered on unifiedserver. Never triggers on pull_request, so a
+# fork PR can never execute anything here.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - name: Deploy
+        run: |
+          set -e
+          cd ~/commerce-core
+          git fetch origin main
+          git reset --hard origin/main
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.proxy.yml up -d --build
+          docker image prune -f
