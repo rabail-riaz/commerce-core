@@ -17,10 +17,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Deploy
+        # The runner's own systemd session predates this user being added to
+        # the docker group, so it still lacks that group; `sg docker` resolves
+        # group membership fresh instead of inheriting the stale session.
         run: |
           set -e
           cd ~/commerce-core
           git fetch origin main
           git reset --hard origin/main
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.proxy.yml up -d --build
-          docker image prune -f
+          sg docker -c "docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.proxy.yml up -d --build"
+          sg docker -c "docker image prune -f"
