@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api-client';
-import { DATE_PRESETS, DEFAULT_DATE_PRESET, dateRangeForPreset, previousPeriod, toISODate } from '../lib/date-presets';
+import { DATE_PRESETS, dateRangeForPreset, previousPeriod, toISODate } from '../lib/date-presets';
+
+const DASHBOARD_DEFAULT_DATE_PRESET = 'this_month';
 
 const unwrap = (response) => response?.data ?? response;
 const label = (value) => String(value ?? '').replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -75,8 +77,8 @@ function delta(current, previous) {
 }
 
 export default function DashboardContent({ tenant }) {
-  const [datePreset, setDatePreset] = useState(DEFAULT_DATE_PRESET);
-  const [range, setRange] = useState(() => dateRangeForPreset(DEFAULT_DATE_PRESET));
+  const [datePreset, setDatePreset] = useState(DASHBOARD_DEFAULT_DATE_PRESET);
+  const [range, setRange] = useState(() => dateRangeForPreset(DASHBOARD_DEFAULT_DATE_PRESET));
   const [report, setReport] = useState(null);
   const [previousReport, setPreviousReport] = useState(null);
   const [loading, setLoading] = useState(true);
