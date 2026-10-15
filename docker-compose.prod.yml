@@ -1,13 +1,9 @@
 services:
   api:
-    ports: [ "127.0.0.1:3001:3001" ]
     restart: unless-stopped
   web:
-    ports: [ "127.0.0.1:3000:3000" ]
     restart: unless-stopped
   postgres:
-    ports: []
     restart: unless-stopped
   redis:
-    ports: []
     restart: unless-stopped
