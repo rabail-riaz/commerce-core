@@ -1,10 +1,10 @@
 import { notFound } from 'next/navigation';
-import PortalPage from '../../components/PortalPage';
+import PortalContent from '../../../components/PortalContent';
 
 const categories = new Set(['website', 'courier', 'email', 'whatsapp']);
 
 export default async function IntegrationCategoryPage({ params }) {
   const { category } = await params;
   if (!categories.has(category)) notFound();
-  return <PortalPage section="Integrations" category={category} />;
+  return <PortalContent section="Integrations" category={category} />;
 }

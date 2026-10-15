@@ -324,8 +324,18 @@ export class LeopardsAdapter implements CourierAdapter {
       canceled: 'CANCELLED',
       returned: 'RETURNED',
       return: 'RETURNED',
+      rto: 'RETURNED',
       failed: 'FAILED',
     };
-    return statuses[normalized] ?? 'PENDING';
+    if (statuses[normalized]) return statuses[normalized];
+    // Fall back to a substring match for wording this dictionary doesn't
+    // cover yet, rather than silently defaulting it to PENDING.
+    if (normalized.includes('return') || normalized.includes('rto')) return 'RETURNED';
+    if (normalized.includes('cancel')) return 'CANCELLED';
+    if (normalized.includes('deliver') && !normalized.includes('undeliver') && !normalized.includes('non_deliver') && !normalized.includes('fail')) return 'DELIVERED';
+    if (normalized.includes('fail')) return 'FAILED';
+    if (normalized.includes('transit') || normalized.includes('dispatch') || normalized.includes('hub')) return 'IN_TRANSIT';
+    if (normalized.includes('pick') || normalized.includes('assign')) return 'PICKED_UP';
+    return 'PENDING';
   }
 }

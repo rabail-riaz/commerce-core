@@ -21,6 +21,7 @@ describe('ShippingService order shipment return flow', () => {
   it('tracks a shipment and records provider-independent timeline events', async () => {
     prisma.shipment.findFirst.mockResolvedValue({
       id: 'shipment-1',
+      orderId: 'order-1',
       trackingNumber: 'TRK-1',
       status: 'LABEL_CREATED',
       statusHistory: [],
@@ -32,8 +33,11 @@ describe('ShippingService order shipment return flow', () => {
       events: [{ status: 'PICKED_UP', note: 'Collected', occurredAt: new Date() }],
     });
     const tx = {
-      shipment: { update: jest.fn().mockResolvedValue({ id: 'shipment-1', status: 'IN_TRANSIT' }) },
+      shipment: { update: jest.fn().mockResolvedValue({ id: 'shipment-1', orderId: 'order-1', status: 'IN_TRANSIT' }) },
       shipmentStatusHistory: { create: jest.fn() },
+      order: { findFirst: jest.fn().mockResolvedValue(null) },
+      orderStatusHistory: { create: jest.fn() },
+      return: { upsert: jest.fn() },
     };
     prisma.$transaction.mockImplementation((callback: (client: typeof tx) => Promise<unknown>) => callback(tx));
 
@@ -43,6 +47,53 @@ describe('ShippingService order shipment return flow', () => {
     expect(tx.shipment.update).toHaveBeenCalled();
     expect(tx.shipmentStatusHistory.create).toHaveBeenCalledTimes(2);
     expect(result.status).toBe('IN_TRANSIT');
+  });
+
+  it('pulls the order status in line with the courier and raises a return when a shipment comes back', async () => {
+    prisma.shipment.findFirst.mockResolvedValue({
+      id: 'shipment-1',
+      orderId: 'order-1',
+      trackingNumber: 'TRK-1',
+      status: 'OUT_FOR_DELIVERY',
+      statusHistory: [],
+      courierAccount: { credentials: { token: 'secret' }, courier: { code: 'POSTEX' } },
+    });
+    couriers.trackShipment.mockResolvedValue({ trackingNumber: 'TRK-1', status: 'RETURNED', events: [] });
+    const tx = {
+      shipment: { update: jest.fn().mockResolvedValue({ id: 'shipment-1', orderId: 'order-1', status: 'RETURNED' }) },
+      shipmentStatusHistory: { create: jest.fn() },
+      order: { findFirst: jest.fn().mockResolvedValue({ status: 'OUT_FOR_DELIVERY' }), update: jest.fn() },
+      orderStatusHistory: { create: jest.fn() },
+      return: { upsert: jest.fn() },
+    };
+    prisma.$transaction.mockImplementation((callback: (client: typeof tx) => Promise<unknown>) => callback(tx));
+
+    await service.trackShipment('tenant-1', 'shipment-1');
+
+    expect(tx.order.update).toHaveBeenCalledWith({ where: { tenantId_id: { tenantId: 'tenant-1', id: 'order-1' } }, data: { status: 'RETURNED' } });
+    expect(tx.orderStatusHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ tenantId: 'tenant-1', orderId: 'order-1', status: 'RETURNED' }),
+    }));
+    expect(tx.return.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tenantId_shipmentId: { tenantId: 'tenant-1', shipmentId: 'shipment-1' } },
+      create: expect.objectContaining({ tenantId: 'tenant-1', orderId: 'order-1', shipmentId: 'shipment-1' }),
+    }));
+  });
+
+  it('syncs every tenant with an active courier account, not just one order', async () => {
+    prisma.courierAccount.findMany
+      .mockResolvedValueOnce([{ tenantId: 'tenant-1' }, { tenantId: 'tenant-2' }])
+      .mockResolvedValueOnce([{ id: 'account-1', credentials: {}, courier: { code: 'POSTEX', name: 'PostEx' } }])
+      .mockResolvedValueOnce([]);
+    couriers.canListShipments.mockReturnValue(true);
+    couriers.listRemoteShipments.mockResolvedValue([]);
+
+    const results = await service.syncAllTenants();
+
+    expect(results).toEqual([
+      { tenantId: 'tenant-1', imported: 0, updated: 0, skipped: 0, failed: 0, errors: [] },
+      { tenantId: 'tenant-2', error: 'Connect a courier in Integrations first' },
+    ]);
   });
 
   it('filters and paginates shipments by courier', async () => {

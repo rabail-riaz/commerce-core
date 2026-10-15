@@ -9,5 +9,6 @@ import { ShippingService } from './shipping.service';
   imports: [AuthModule, CouriersModule],
   controllers: [ShippingController, CourierWebhookController],
   providers: [ShippingService],
+  exports: [ShippingService],
 })
 export class ShippingModule {}

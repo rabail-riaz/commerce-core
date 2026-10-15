@@ -1,23 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api-client';
-import DashboardContent from './DashboardContent';
-import OrdersContent from './OrdersContent';
-import CustomersContent from './CustomersContent';
-import ProductsContent from './ProductsContent';
-import IntegrationsContent from './IntegrationsContent';
-import ShippingContent from './ShippingContent';
-import ReturnsContent from './ReturnsContent';
-import InboxContent from './InboxContent';
-import SupportContent from './SupportContent';
-import CampaignsContent from './CampaignsContent';
-import AutomationsContent from './AutomationsContent';
-import ReportsContent from './ReportsContent';
-import SettingsContent from './SettingsContent';
-import AccountingContent from './AccountingContent';
+import { api, ApiError, clearSession } from '../lib/api-client';
+import { sectionAndCategoryFromPathname } from '../lib/section';
+import { PortalContext } from '../components/portal-context';
 
 const navigation = [
   ['Dashboard', '/dashboard', '⌂'],
@@ -49,11 +37,35 @@ const accountingCopy = {
   expenses: ['ACCOUNTING', 'Expenses', 'Track bilty, transportation, and other costs — optionally linked to a purchase order.'],
 };
 
-export default function PortalShell({ section, category, user, tenant }) {
+export default function PortalLayout({ children }) {
   const router = useRouter();
-  const initials = `${user.firstName?.[0] ?? ''}${user.lastName?.[0] ?? user.email[0]}`.toUpperCase();
+  const pathname = usePathname();
+  const { section, category } = sectionAndCategoryFromPathname(pathname);
+  const [state, setState] = useState({ loading: true, user: null, tenant: null, error: '' });
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      if (!sessionStorage.getItem('commerce.accessToken')) {
+        router.replace('/login');
+        return;
+      }
+      try {
+        const [userResult, tenantResult] = await Promise.all([api.currentUser(), api.currentTenant()]);
+        if (active) setState({ loading: false, user: userResult.data ?? userResult, tenant: tenantResult.data ?? tenantResult, error: '' });
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status === 401) clearSession();
+        if (active) {
+          setState({ loading: false, user: null, tenant: null, error: error.message });
+          router.replace('/login');
+        }
+      }
+    }
+    load();
+    return () => { active = false; };
+  }, [router]);
 
   useEffect(() => {
     api.listNotifications().then((response) => setNotifications(response.data ?? response)).catch(() => {});
@@ -64,6 +76,11 @@ export default function PortalShell({ section, category, user, tenant }) {
     router.replace('/login');
   }
 
+  if (state.loading) return <main className="portal-loading">Loading workspace…</main>;
+  if (!state.user || !state.tenant) return null;
+
+  const { user, tenant } = state;
+  const initials = `${user.firstName?.[0] ?? ''}${user.lastName?.[0] ?? user.email[0]}`.toUpperCase();
   const heading = section === 'Integrations' && category && integrationCopy[category]
     ? integrationCopy[category]
     : section === 'Accounting' && category && accountingCopy[category]
@@ -106,11 +123,11 @@ export default function PortalShell({ section, category, user, tenant }) {
         </header>
         <section className="content">
           <div className="content-heading"><div><p className="eyebrow">{heading[0]}</p><h1>{heading[1]}</h1><p className="muted">{heading[2]}</p></div><span className="date-chip">Today · {new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span></div>
-          {section === 'Dashboard' ? <DashboardContent tenant={tenant} /> : section === 'Orders' ? <OrdersContent /> : section === 'Customers' ? <CustomersContent /> : section === 'Products' ? <ProductsContent /> : section === 'Shipping' ? <ShippingContent /> : section === 'Returns' ? <ReturnsContent /> : section === 'Inbox' ? <InboxContent /> : section === 'Support' ? <SupportContent /> : section === 'Campaigns' ? <CampaignsContent /> : section === 'Automations' ? <AutomationsContent /> : section === 'Reports' ? <ReportsContent /> : section === 'Accounting' ? <AccountingContent category={category} /> : section === 'Integrations' ? <IntegrationsContent category={category} /> : section === 'Settings' ? <SettingsContent /> : <EmptyContent section={section} />}
+          <PortalContext.Provider value={{ user, tenant }}>
+            {children}
+          </PortalContext.Provider>
         </section>
       </main>
     </div>
   );
 }
-
-function EmptyContent({ section }) { return <div className="empty-state"><div className="empty-icon">✦</div><h2>{section} is ready</h2><p>This area is part of your operations shell. Feature workflows will be added in the next phase.</p><Link href="/dashboard" className="button">Back to dashboard</Link></div>; }
