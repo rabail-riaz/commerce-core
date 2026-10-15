@@ -1,4 +1,4 @@
-import PortalPage from '../components/PortalPage';
+import PortalContent from '../../components/PortalContent';
 
 const sections = new Set([
   'orders', 'customers', 'products', 'shipping', 'returns', 'inbox',
@@ -8,5 +8,5 @@ const sections = new Set([
 export default async function SectionPage({ params }) {
   const { section } = await params;
   const title = sections.has(section) ? section[0].toUpperCase() + section.slice(1) : 'Dashboard';
-  return <PortalPage section={title} />;
+  return <PortalContent section={title} />;
 }
