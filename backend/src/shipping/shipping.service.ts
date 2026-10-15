@@ -181,6 +181,7 @@ export class ShippingService {
       if (!knownEvents.has(`${status}|Courier tracking update`)) {
         await tx.shipmentStatusHistory.create({ data: { tenantId, shipmentId: id, status, note: 'Courier tracking update' } });
       }
+      await this.syncOrderFromShipmentStatus(tx, tenantId, updated.orderId, id, status, shipment.courierAccount!.courier.code);
       return updated;
     });
     return result;
@@ -288,9 +289,11 @@ export class ShippingService {
     const status = this.shipmentStatus(listing.status);
     const existing = await this.prisma.shipment.findFirst({
       where: { tenantId, trackingNumber: listing.trackingNumber },
-      select: { id: true },
+      select: { id: true, orderId: true },
     });
-    const orderId = await this.matchOrCreateOrder(tenantId, courierCode, listing);
+    // Reuse the already-linked order when we know it; only resolve-or-create
+    // via the courier's order reference for a shipment we've never seen before.
+    const orderId = existing?.orderId ?? await this.matchOrCreateOrder(tenantId, courierCode, listing);
     const data = {
       courierAccountId,
       externalShipmentId: listing.shipmentReference ?? listing.trackingNumber,
@@ -300,20 +303,27 @@ export class ShippingService {
       shippedAt: listing.bookedAt,
       deliveredAt: status === ShipmentStatus.DELIVERED ? listing.deliveredAt ?? new Date() : listing.deliveredAt,
     };
-    if (existing) {
-      await this.prisma.shipment.update({
-        where: { tenantId_id: { tenantId, id: existing.id } },
-        data,
-      });
-      return false;
-    }
-    const created = await this.prisma.shipment.create({
-      data: { tenantId, orderId, ...data },
+    return this.prisma.$transaction(async (tx) => {
+      let shipmentId: string;
+      let created: boolean;
+      if (existing) {
+        await tx.shipment.update({ where: { tenantId_id: { tenantId, id: existing.id } }, data });
+        shipmentId = existing.id;
+        created = false;
+      } else {
+        const newShipment = await tx.shipment.create({ data: { tenantId, orderId, ...data } });
+        await tx.shipmentStatusHistory.create({
+          data: { tenantId, shipmentId: newShipment.id, status, note: `${courierCode} import` },
+        });
+        shipmentId = newShipment.id;
+        created = true;
+      }
+      // The order's status now follows the courier's view of the shipment; a
+      // brand-new order was just created with this same status, so this is a
+      // no-op there and only matters for an order that already existed.
+      await this.syncOrderFromShipmentStatus(tx, tenantId, orderId, shipmentId, status, courierCode);
+      return created;
     });
-    await this.prisma.shipmentStatusHistory.create({
-      data: { tenantId, shipmentId: created.id, status, note: `${courierCode} import` },
-    });
-    return true;
   }
 
   private async matchOrCreateOrder(
@@ -355,6 +365,43 @@ export class ShippingService {
       data: { tenantId, orderId: created.id, status: orderStatus, note: `${courierCode} shipment import` },
     });
     return created.id;
+  }
+
+  /**
+   * Keeps the order's status in lockstep with the courier's view of the shipment:
+   * once a courier status exists, it wins over whatever WooCommerce/the storefront
+   * last reported. If the courier marks a shipment RETURNED, a Return record is
+   * raised automatically (idempotent -- a shipment can only have one).
+   */
+  private async syncOrderFromShipmentStatus(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderId: string,
+    shipmentId: string,
+    status: ShipmentStatus,
+    courierCode: string,
+  ) {
+    const orderStatus = this.orderStatusFromShipment(status);
+    const order = await tx.order.findFirst({ where: { tenantId, id: orderId }, select: { status: true } });
+    if (order && order.status !== orderStatus) {
+      await tx.order.update({ where: { tenantId_id: { tenantId, id: orderId } }, data: { status: orderStatus } });
+      await tx.orderStatusHistory.create({
+        data: { tenantId, orderId, status: orderStatus, note: `${courierCode} status sync` },
+      });
+    }
+    if (status === ShipmentStatus.RETURNED) {
+      await tx.return.upsert({
+        where: { tenantId_shipmentId: { tenantId, shipmentId } },
+        update: {},
+        create: {
+          tenantId,
+          orderId,
+          shipmentId,
+          reason: `${courierCode} reported this shipment as returned`,
+          statusHistory: { create: { status: ReturnStatus.RETURN_REQUESTED, note: `${courierCode} status sync` } },
+        },
+      });
+    }
   }
 
   private orderStatusFromShipment(status: string): OrderStatus {
