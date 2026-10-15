@@ -94,8 +94,13 @@ export class PostExAdapter implements CourierAdapter {
     const response = await this.request(parsed, `/services/integration/api/order/v1/track-order/${encodeURIComponent(trackingNumber)}`, { method: 'GET' });
     const body = await this.readBody(response);
     this.assertSuccess(response, body, 'track shipment');
-    const status = this.mapStatus(this.value(body, ['status', 'orderStatus', 'trackingStatus']) ?? 'UNKNOWN');
-    return { trackingNumber, status, events: [], raw: body };
+    const status = this.mapStatus(this.value(body, ['transactionStatus', 'status', 'orderStatus', 'trackingStatus']) ?? 'UNKNOWN');
+    const events = this.transactionHistory(body).map((entry) => ({
+      status: this.mapStatus(this.value(entry, ['transactionStatusMessage', 'transactionStatus', 'status']) ?? 'UNKNOWN'),
+      note: this.value(entry, ['transactionStatusMessage', 'transactionStatus', 'status']),
+      occurredAt: this.dateValue(entry, ['updatedAt', 'transactionDate', 'createdAt']),
+    }));
+    return { trackingNumber, status, events, raw: body };
   }
 
   async getLabel(_credentials: CourierCredentials, _shipmentReference: string): Promise<ShipmentLabel> {
@@ -201,6 +206,18 @@ export class PostExAdapter implements CourierAdapter {
     };
   }
 
+  private transactionHistory(body: Record<string, unknown>): Record<string, unknown>[] {
+    const direct = body.transactionStatusHistory;
+    if (Array.isArray(direct)) {
+      return direct.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item));
+    }
+    const nested = body.dist;
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return this.transactionHistory(nested as Record<string, unknown>);
+    }
+    return [];
+  }
+
   private dateValue(item: Record<string, unknown>, keys: string[]) {
     const value = this.value(item, keys);
     if (!value) return undefined;
@@ -236,9 +253,22 @@ export class PostExAdapter implements CourierAdapter {
       delivered: 'DELIVERED',
       cancelled: 'CANCELLED',
       canceled: 'CANCELLED',
+      return: 'RETURNED',
       returned: 'RETURNED',
+      rto: 'RETURNED',
       failed: 'FAILED',
     };
-    return statuses[normalized] ?? 'PENDING';
+    if (statuses[normalized]) return statuses[normalized];
+    // PostEx's exact wording for a given transaction varies (e.g. "Return",
+    // "Return to Shipper", "Delivery Failed - Returned"); fall back to a
+    // substring match rather than silently defaulting an unrecognized value
+    // to PENDING, which would hide a real status from the rest of the app.
+    if (normalized.includes('return') || normalized.includes('rto')) return 'RETURNED';
+    if (normalized.includes('cancel')) return 'CANCELLED';
+    if (normalized.includes('deliver') && !normalized.includes('undeliver') && !normalized.includes('non_deliver') && !normalized.includes('fail')) return 'DELIVERED';
+    if (normalized.includes('fail')) return 'FAILED';
+    if (normalized.includes('transit') || normalized.includes('dispatch') || normalized.includes('hub')) return 'IN_TRANSIT';
+    if (normalized.includes('pick')) return 'PICKED_UP';
+    return 'PENDING';
   }
 }
